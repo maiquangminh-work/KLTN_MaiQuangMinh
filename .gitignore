@@ -1,4 +1,24 @@
+# --- Python & Môi trường ---
 venv/
 __pycache__/
-*.h5
+.env
+
+# --- Dữ liệu & Database ---
 *.csv
+*.db
+*.sqlite3
+data/
+
+# --- Mô hình AI (Trọng số & Scaler) ---
+*.h5
+*.pkl
+
+# --- Frontend (React/Node.js) ---
+node_modules/
+dist/
+build/
+.npm/
+
+# --- File rác hệ thống & Khác ---
+*.png
+.DS_Store
