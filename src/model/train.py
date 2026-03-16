@@ -18,7 +18,7 @@ def create_sequences(data, target, window_size=30):
     return np.array(X), np.array(y)
 
 def train_model(ticker='VCB'):
-    print(f"🚀 Huấn luyện cấu trúc Sai phân (Differencing) cho {ticker}...\n")
+    print(f"Huấn luyện cấu trúc Sai phân (Differencing) cho {ticker}...\n")
     
     df = pd.read_csv(f'data/processed/{ticker}_features.csv')
     
@@ -70,7 +70,7 @@ def train_model(ticker='VCB'):
                                  monitor='val_loss', save_best_only=True, verbose=1)
     reduce_lr = ReduceLROnPlateau(monitor='val_loss', factor=0.5, patience=10, min_lr=0.00001, verbose=1)
     
-    print("\n⏳ AI đang học cách nhận diện biên độ dao động...")
+    print("\n AI đang học cách nhận diện biên độ dao động...")
     model.fit(X_train, y_train,
               validation_data=(X_val, y_val),
               epochs=150,

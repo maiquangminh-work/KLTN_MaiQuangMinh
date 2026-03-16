@@ -18,7 +18,7 @@ def create_sequences(data, target, window_size=30):
     return np.array(X), np.array(y)
 
 def evaluate_model(ticker='VCB'):
-    print(f"📊 Đang đánh giá và tái tạo đồ thị cho {ticker}...\n")
+    print(f"Đang đánh giá và tái tạo đồ thị cho {ticker}...\n")
     
     df = pd.read_csv(f'data/processed/{ticker}_features.csv')
     
@@ -75,7 +75,7 @@ def evaluate_model(ticker='VCB'):
     plot_dates = test_dates[30 : 30 + len(predicted_diff)]
     
     print("\n" + "="*40)
-    print(f"🏆 KẾT QUẢ ĐÁNH GIÁ ĐÃ KHẮC PHỤC ĐỘ TRỄ ({ticker})")
+    print(f"KẾT QUẢ ĐÁNH GIÁ ĐÃ KHẮC PHỤC ĐỘ TRỄ ({ticker})")
     print("="*40)
     print(f"🔹 RMSE : {rmse:.2f} VNĐ")
     print(f"🔹 MAE  : {mae:.2f} VNĐ")
