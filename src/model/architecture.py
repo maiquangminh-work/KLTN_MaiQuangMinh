@@ -30,7 +30,7 @@ def build_cnn_lstm_attention_model(input_shape):
     # Tích hợp Attention
     x = AttentionLayer(name="Attention_Layer")(x)
     
-    # Tầng kết nối với Dropout 0.2 theo đúng khóa luận
+    # Tầng kết nối với Dropout 0.2
     x = Dense(units=32, activation='relu', name="Dense_Layer")(x)
     x = Dropout(0.2, name="Dropout_1")(x)
     outputs = Dense(units=1, activation='linear', name="Output_Layer")(x)
@@ -43,3 +43,5 @@ def build_cnn_lstm_attention_model(input_shape):
                   metrics=['mae'])
     
     return model
+
+# python src\model\architecture.py (file to define the model architecture)
