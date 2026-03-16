@@ -102,8 +102,6 @@ function App() {
     mouseDownEvent.preventDefault();
     
     const handleMouseMove = (e) => {
-      // Vì khung chat neo ở phải và dưới, ta lấy kích thước màn hình trừ đi tọa độ chuột 
-      // 25 là lề phải, 105 là lề dưới (tính cả bong bóng chat)
       const newWidth = window.innerWidth - e.clientX - 25; 
       const newHeight = window.innerHeight - e.clientY - 105; 
       
@@ -143,7 +141,7 @@ function App() {
     if (tab === 'news' && newsData.length === 0) setLoadingNews(true);
   };
 
-  // --- PHẦN THÊM MỚI 2: LOGIC GỬI TIN NHẮN ---
+  // Logic gửi tin nhắn và nhận phản hồi từ AI
   useEffect(() => {
     chatEndRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [chatHistory]);
@@ -197,8 +195,8 @@ function App() {
   }, [activeTab, newsData.length]);
 
   // =========================================================================
-  // VÁ LỖI HIỆU NĂNG BẰNG useMemo: ĐÓNG BĂNG TÍNH TOÁN DỮ LIỆU
-  // =========================================================================
+  // Xử lý dữ liệu và lọc trong dữ liệu để hiển thị
+
   const { sortedFullData, enrichedFullData, availableYears, availableMonths } = useMemo(() => {
     const safeChartData = Array.isArray(data?.chart_data) ? data.chart_data : [];
     const uniqueDataMap = new Map();
@@ -236,7 +234,7 @@ function App() {
     const months = ['01', '02', '03', '04', '05', '06', '07', '08', '09', '10', '11', '12'];
     
     return { sortedFullData: sortedData, enrichedFullData: enrichedData, availableYears: years, availableMonths: months };
-  }, [data]); // <-- CHỈ TÍNH TOÁN LẠI 1 LẦN DUY NHẤT KHI DỮ LIỆU TỪ SERVER TRẢ VỀ MỚI
+  }, [data]); // Tính toán lại 1 lần duy nhất khi data thay đổi
 
   const displayTableData = useMemo(() => {
     if (!enrichedFullData) return [];
@@ -245,7 +243,7 @@ function App() {
       const matchMonth = filterMonth === 'All' || row.month === filterMonth;
       return matchYear && matchMonth;
     }).reverse(); 
-  }, [enrichedFullData, filterYear, filterMonth]); // <-- CHỈ CHẠY LẠI KHI ĐỔI BỘ LỌC THÁNG/NĂM 
+  }, [enrichedFullData, filterYear, filterMonth]); // Chạy lại khi đổi filter hoặc data đã được enrich
 
   useEffect(() => {
     if (activeTab !== 'chart' || !data || !chartContainerRef.current || !attentionContainerRef.current) return;
@@ -426,7 +424,6 @@ function App() {
     .card h3 { color: #848e9c; font-size: 13px; margin: 0 0 10px 0; letter-spacing: 0.5px; }
     .price { font-size: 24px; font-weight: bold; color: #eaecef; }
 
-    /* SỬA LỖI MÀU SẮC BẰNG !important */
     .text-green { color: #0ecb81 !important; } 
     .text-red { color: #f6465d !important; } 
     .text-yellow { color: #fcd535 !important; }
@@ -497,7 +494,8 @@ function App() {
 
     @keyframes spin { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }
     .loader-spinner { border: 4px solid rgba(252, 213, 53, 0.2); border-top: 4px solid #fcd535; border-radius: 50%; width: 50px; height: 50px; animation: spin 1s linear infinite; }
-    /* --- PHẦN THÊM MỚI 3: CSS CHATBOT --- */
+    
+    // CSS chatbot
     .chat-widget { position: fixed; bottom: 25px; right: 25px; z-index: 9999; }
     .chat-bubble { width: 60px; height: 60px; background: #fcd535; border-radius: 50%; display: flex; justify-content: center; align-items: center; cursor: pointer; border: none; box-shadow: 0 8px 24px rgba(0,0,0,0.5); transition: 0.3s; }
     .chat-bubble:hover { transform: scale(1.1); }
@@ -519,7 +517,7 @@ function App() {
 
   if (error && activeTab === 'chart') return (
     <div style={{ background: '#0b0e11', height: '100vh', display: 'flex', flexDirection: 'column', justifyContent: 'center', alignItems: 'center', color: '#f6465d' }}>
-      <h1>⚠️ {error}</h1>
+      <h1> {error}</h1>
       <button className="btn" onClick={() => window.location.reload()}>THỬ LẠI</button>
     </div>
   );
@@ -529,7 +527,7 @@ function App() {
   const priceDiff = predictedPrice - currentPrice;
   let recommendation = "GIỮ CỔ PHIẾU";
   let recColor = "#fcd535"; 
-  // Đã hạ biên độ xuống 0.8% để hệ thống nhạy bén hơn với các biến động nhỏ
+  // Để biên độ là 0.8% để hệ thống nhạy bén hơn với các biến động nhỏ
   if (priceDiff > currentPrice * 0.008) { 
       recommendation = "MUA VÀO"; 
       recColor = "#0ecb81"; 
@@ -545,12 +543,13 @@ function App() {
     <div className="app-container">
       <style>{cssStyles}</style>
       
-      {/* --- PHẦN THÊM MỚI 4: GIAO DIỆN CHATBOT --- */}
+      {// Giao diện chatbot 
+      }
       <div className="chat-widget">
         {isChatOpen && (
           <div className="chat-window" style={{ width: `${chatSize.width}px`, height: `${chatSize.height}px` }}>
             
-            {/* VÙNG KÉO KÍCH THƯỚC VÔ HÌNH (GÓC TRÊN TRÁI) */}
+            {/* Mở rộng kích thước boxchat */}
             <div 
               onMouseDown={startResize}
               style={{
@@ -560,13 +559,13 @@ function App() {
               }}
               title="Kéo để đổi kích thước"
             />
-            {/* Icon nhỏ để người dùng nhận biết có thể kéo */}
+            {/* Icon kéo */}
             <div style={{ position: 'absolute', top: '8px', left: '10px', pointerEvents: 'none', color: '#fcd535', fontSize: '18px', zIndex: 10000, fontWeight: 'bold'}}>
               ↖
             </div>
 
             <div className="chat-header">
-               <span style={{marginLeft: '25px'}}>🤖 TRỢ LÝ AI BIG4 BANK</span>
+               <span style={{marginLeft: '25px'}}> TRỢ LÝ AI BANK</span>
                <button onClick={() => setIsChatOpen(false)} style={{background:'none', border:'none', color:'#848e9c', cursor:'pointer', fontSize: '20px'}}>×</button>
             </div>
             <div className="chat-messages">
@@ -594,18 +593,18 @@ function App() {
       </div>
 
       <div className="header">
-        <h1>AI TRADING TERMINAL <span>| Kỹ thuật: CNN-LSTM-Attention</span></h1>
+        <h1>HỆ THỐNG AI HỖ TRỢ NGƯỜI DÙNG DỰ ĐOÁN CỔ PHIẾU <span>| Kỹ thuật: CNN-LSTM-Attention</span></h1>
       </div>
       
       <div className="nav-tabs">
         <div className={`nav-tab ${activeTab === 'chart' ? 'active' : ''}`} onClick={() => handleTabChange('chart')}>
-          📊 BIỂU ĐỒ KỸ THUẬT
+          BIỂU ĐỒ KỸ THUẬT
         </div>
         <div className={`nav-tab ${activeTab === 'info' ? 'active' : ''}`} onClick={() => handleTabChange('info')}>
-          🏦 THÔNG TIN CƠ BẢN
+          THÔNG TIN CƠ BẢN
         </div>
         <div className={`nav-tab ${activeTab === 'news' ? 'active' : ''}`} onClick={() => handleTabChange('news')}>
-          📰 TIN TỨC THỊ TRƯỜNG
+          TIN TỨC THỊ TRƯỜNG
         </div>
       </div>
 
@@ -808,7 +807,7 @@ function App() {
             <input 
               type="text" 
               className="search-input" 
-              placeholder="🔍 Tìm kiếm từ khóa (VD: Lãi suất, VCB, Khối ngoại)..." 
+              placeholder="Tìm kiếm từ khóa (VD: Lãi suất, VCB, Khối ngoại)..." 
               value={searchQuery}
               onChange={(e) => setSearchQuery(e.target.value)}
             />
