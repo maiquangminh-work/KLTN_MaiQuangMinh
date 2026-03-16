@@ -1,0 +1,23 @@
+# --- Lõi Học sâu & Khoa học Dữ liệu ---
+tensorflow>=2.10.0
+pandas>=1.5.0
+numpy>=1.23.0
+scikit-learn>=1.2.0
+
+# --- Thu thập dữ liệu tài chính & Tin tức ---
+vnstock==3.4.2
+vnai==2.3.9
+feedparser
+requests
+
+# --- Backend & API Server ---
+fastapi>=0.104.0
+uvicorn>=0.23.2
+python-dotenv>=1.0.0
+
+# --- Database (Dùng cho lưu trữ lịch sử dự báo sau này) ---
+psycopg2-binary>=2.9.9
+sqlalchemy>=2.0.0
+
+# --- Tiện ích ---
+jupyter>=1.0.0
