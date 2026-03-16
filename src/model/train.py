@@ -22,21 +22,21 @@ def train_model(ticker='VCB'):
     
     df = pd.read_csv(f'data/processed/{ticker}_features.csv')
     
-    # KỸ THUẬT CỐT LÕI: Tạo biến mục tiêu là Sự chênh lệch giá (Sai phân)
+    # Tạo biến mục tiêu là Sự chênh lệch giá (Sai phân)
     df['price_diff'] = df['close_winsorized'].diff()
     df.dropna(inplace=True) # Xóa dòng NaN đầu tiên do phép trừ
     df.reset_index(drop=True, inplace=True)
     
-    # Sử dụng 8 đặc trưng gốc làm bệ phóng
+    # Sử dụng 8 đặc trưng gốc và biến mục tiêu là price_diff
     features = ['open', 'high', 'low', 'close_winsorized', 'volume', 'sma_10', 'sma_20', 'rsi_14']
-    target_col = 'price_diff' # AI giờ sẽ học cách dự báo biến động
+    target_col = 'price_diff' # Biến mục tiêu là sự chênh lệch giá
     
     data_values = df[features].values
     target_values = df[[target_col]].values
     
     n = len(df)
-    train_end = int(n * 0.8)
-    val_end = int(n * 0.9)
+    train_end = int(n * 0.8) # 80% dữ liệu dùng để huấn luyện
+    val_end = int(n * 0.9) # 10% tiếp theo dùng để validation, 10% cuối cùng để test
     
     train_data = data_values[:train_end]
     val_data = data_values[train_end:val_end]
@@ -52,17 +52,19 @@ def train_model(ticker='VCB'):
     scaled_val_data = feature_scaler.transform(val_data)
     scaled_val_target = target_scaler.transform(val_target)
     
+    # Lưu scaler để tái sử dụng khi đánh giá và dự báo
     os.makedirs('models', exist_ok=True)
     with open(f'models/{ticker.lower()}_feature_scaler.pkl', 'wb') as f:
         pickle.dump(feature_scaler, f)
     with open(f'models/{ticker.lower()}_target_scaler.pkl', 'wb') as f:
         pickle.dump(target_scaler, f)
         
+    # Tạo chuỗi dữ liệu cho mô hình LSTM-Attention
     window_size = 30
     X_train, y_train = create_sequences(scaled_train_data, scaled_train_target, window_size)
     X_val, y_val = create_sequences(scaled_val_data, scaled_val_target, window_size)
     
-    # Khởi tạo nguyên bản kiến trúc CNN-LSTM-Attention
+    # Khởi tạo CNN-LSTM-Attention 
     model = build_cnn_lstm_attention_model((window_size, len(features)))
     
     early_stop = EarlyStopping(monitor='val_loss', patience=20, restore_best_weights=True, verbose=1)
@@ -82,6 +84,8 @@ if __name__ == "__main__":
     tickers = ['VCB', 'BID', 'CTG']
     for ticker in tickers:
         print(f"\n{'='*50}")
-        print(f"BẮT ĐẦU HUẤN LUYỆN TỰ ĐỘNG CHO MÃ: {ticker}")
+        print(f"Bắt đầu huấn luyện cho mã: {ticker}")
         print(f"{'='*50}\n")
         train_model(ticker)
+        
+# python src\model\train.py (command to run the training)

@@ -4,6 +4,7 @@ import numpy as np
 import pandas as pd
 import pickle
 import matplotlib.pyplot as plt
+import matplotlib.ticker as mticker
 from sklearn.metrics import mean_squared_error, mean_absolute_error, r2_score
 from tensorflow.keras.models import load_model
 
@@ -34,6 +35,7 @@ def evaluate_model(ticker='VCB'):
     target_values = df[[target_col]].values
     price_values = df[price_col].values
     
+    # Chia dữ liệu thành train, validation và test
     n = len(df)
     val_end = int(n * 0.9)
     
@@ -41,8 +43,10 @@ def evaluate_model(ticker='VCB'):
     test_target = target_values[val_end:]
     test_prices = price_values[val_end:]
     
+    # Lấy ngày tháng cho phần test để vẽ đồ thị
     test_dates = pd.to_datetime(df['time'].iloc[val_end:]).reset_index(drop=True)
     
+    # Tải scaler đã lưu từ quá trình huấn luyện
     with open(f'models/{ticker.lower()}_feature_scaler.pkl', 'rb') as f:
         feature_scaler = pickle.load(f)
     with open(f'models/{ticker.lower()}_target_scaler.pkl', 'rb') as f:
@@ -53,26 +57,28 @@ def evaluate_model(ticker='VCB'):
     
     X_test, _ = create_sequences(scaled_test_data, scaled_test_target, window_size=30)
     
+    # Tải mô hình đã huấn luyện
     model = load_model(f'models/cnn_lstm_attn_{ticker.lower()}_v1.h5', 
                        custom_objects={'AttentionLayer': AttentionLayer})
     
-    # 1. AI đưa ra mức dự báo chênh lệch (Delta P)
+    # Step 1: AI đưa ra mức dự báo chênh lệch (Delta P)
     predicted_scaled_diff = model.predict(X_test)
     predicted_diff = target_scaler.inverse_transform(predicted_scaled_diff).flatten()
     
-    # 2. TOÁN TÁI TẠO (Reconstruction): 
+    # Step 2: Toán tái tạo (Reconstruction): 
     # Giá dự báo hôm nay = Giá thực tế hôm qua + Mức chênh lệch AI đoán
     previous_prices = test_prices[29 : 29 + len(predicted_diff)]
     actual_prices = test_prices[30 : 30 + len(predicted_diff)] # Ground truth
     
     predicted_prices = previous_prices + predicted_diff
     
+    # Step 3: Đánh giá hiệu suất với các chỉ số RMSE, MAE, R² và MAPE
     rmse = np.sqrt(mean_squared_error(actual_prices, predicted_prices))
     mae = mean_absolute_error(actual_prices, predicted_prices)
     r2 = r2_score(actual_prices, predicted_prices)
     mape = np.mean(np.abs((actual_prices - predicted_prices) / actual_prices)) * 100
     
-    plot_dates = test_dates[30 : 30 + len(predicted_diff)]
+    plot_dates = test_dates[30 : 30 + len(predicted_diff)] # Ngày tháng tương ứng với phần test đã tái tạo
     
     print("\n" + "="*40)
     print(f"KẾT QUẢ ĐÁNH GIÁ ĐÃ KHẮC PHỤC ĐỘ TRỄ ({ticker})")
@@ -87,13 +93,17 @@ def evaluate_model(ticker='VCB'):
     plt.plot(plot_dates, actual_prices, color='blue', label='Giá Thực Tế')
     plt.plot(plot_dates, predicted_prices, color='red', linestyle='--', label='AI Dự Báo (Sai phân tái tạo)')
     
-    plt.title(f'So sánh Giá Thực tế và Dự báo - Khắc phục Lag ({ticker})', fontsize=16)
+    plt.title(f'So sánh Giá Thực tế và Dự báo({ticker})', fontsize=16)
     plt.xlabel('Thời gian', fontsize=12)
     plt.ylabel('Giá đóng cửa (VNĐ)', fontsize=12)
     plt.legend(fontsize=12)
     plt.grid(True, linestyle=':', alpha=0.7)
     
     plot_path = f'models/{ticker.lower()}_final_plot.png'
+    ax = plt.gca() # Định dạng trục y để hiển thị giá theo chuẩn VNĐ
+    formatter = mticker.FuncFormatter(lambda x, pos: f"{int(x * 1000):,} VNĐ".replace(',', '.'))
+    ax.yaxis.set_major_formatter(formatter)
+    
     plt.savefig(plot_path)
     plt.show()
 
