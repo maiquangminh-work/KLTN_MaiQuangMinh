@@ -123,7 +123,7 @@ def get_prediction(ticker: str):
             {"time": str(t).split(' ')[0], "weight": float(w)} 
             for t, w in zip(last_30_df['time'], attention_weights)
         ]
-        # --- KẾT THÚC TÍNH NĂNG XAI ---
+        # End Attention Weights Extraction
 
         chart_data = df[['time', 'open', 'high', 'low', 'close_winsorized', 'volume', 'rsi_14']].copy()
         chart_data['time'] = chart_data['time'].astype(str)

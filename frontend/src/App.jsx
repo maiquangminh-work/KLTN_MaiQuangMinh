@@ -284,7 +284,7 @@ function App() {
       });
 
       const attentionLineSeries = attnChart.addSeries(LineSeries, { 
-        color: '#f6465d', 
+        color: '#e3fe1a', 
         lineWidth: 2, 
         crosshairMarkerVisible: true,
         priceScaleId: 'left' 
@@ -356,7 +356,7 @@ function App() {
 
             let html = '';
             if (volData) html += `<div style="margin-bottom: 5px;"><span style="color: #848e9c">Khối lượng: </span> <span style="color: #eaecef; font-weight: bold;">${formatVND(volData.value)}</span></div>`;
-            if (attnData && attnData.value !== undefined) html += `<div><span style="color: #848e9c">Trọng số AI: </span> <span style="color: #f6465d; font-weight: bold;">${attnData.value.toFixed(2)}%</span></div>`;
+            if (attnData && attnData.value !== undefined) html += `<div><span style="color: #848e9c">Trọng số AI: </span> <span style="color: #e3fe1a; font-weight: bold;">${attnData.value.toFixed(2)}%</span></div>`;
 
             if (html) {
               attnTooltipRef.current.style.display = 'flex'; 
@@ -495,7 +495,7 @@ function App() {
     @keyframes spin { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }
     .loader-spinner { border: 4px solid rgba(252, 213, 53, 0.2); border-top: 4px solid #fcd535; border-radius: 50%; width: 50px; height: 50px; animation: spin 1s linear infinite; }
     
-    // CSS chatbot
+    /* CSS chatbot */
     .chat-widget { position: fixed; bottom: 25px; right: 25px; z-index: 9999; }
     .chat-bubble { width: 60px; height: 60px; background: #fcd535; border-radius: 50%; display: flex; justify-content: center; align-items: center; cursor: pointer; border: none; box-shadow: 0 8px 24px rgba(0,0,0,0.5); transition: 0.3s; }
     .chat-bubble:hover { transform: scale(1.1); }
@@ -543,8 +543,7 @@ function App() {
     <div className="app-container">
       <style>{cssStyles}</style>
       
-      {// Giao diện chatbot 
-      }
+      {/* Giao diện chatbot AI */}
       <div className="chat-widget">
         {isChatOpen && (
           <div className="chat-window" style={{ width: `${chatSize.width}px`, height: `${chatSize.height}px` }}>
@@ -646,7 +645,7 @@ function App() {
                  <div style={{ display: 'flex', gap: '15px' }}>
                    <span style={{ fontSize: '11px', color: '#0ecb81' }}>■ Vol Tăng</span>
                    <span style={{ fontSize: '11px', color: '#f6465d' }}>■ Vol Giảm</span>
-                   <span style={{ fontSize: '11px', color: '#f6465d', fontWeight: 'bold' }}>— Line Đỏ (AI Attention)</span>
+                   <span style={{ fontSize: '11px', color: '#e3fe1a', fontWeight: 'bold' }}>— Line Đỏ (AI Attention)</span>
                  </div>
               </div>
 

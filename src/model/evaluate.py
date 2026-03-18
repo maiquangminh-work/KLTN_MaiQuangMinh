@@ -77,6 +77,10 @@ def evaluate_model(ticker='VCB'):
     mae = mean_absolute_error(actual_prices, predicted_prices)
     r2 = r2_score(actual_prices, predicted_prices)
     mape = np.mean(np.abs((actual_prices - predicted_prices) / actual_prices)) * 100
+    # Tính Directional Accuracy (DA)
+    actual_direction = np.sign(actual_prices[1:] - actual_prices[:-1])
+    predicted_direction = np.sign(predicted_prices[1:] - predicted_prices[:-1])
+    da = np.mean(actual_direction == predicted_direction) * 100
     
     plot_dates = test_dates[30 : 30 + len(predicted_diff)] # Ngày tháng tương ứng với phần test đã tái tạo
     
@@ -88,6 +92,7 @@ def evaluate_model(ticker='VCB'):
     print(f"🔹 MAPE : {mape:.2f} %")
     print(f"🔹 R²   : {r2:.4f}")
     print("="*40 + "\n")
+    print(f"🔹 DA   : {da:.2f} %")
     
     plt.figure(figsize=(14, 7))
     plt.plot(plot_dates, actual_prices, color='blue', label='Giá Thực Tế')
