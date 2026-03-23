@@ -203,7 +203,7 @@ async def ai_assistant(request: Request):
 
         QUY TẮC TRÌNH BÀY (BẮT BUỘC):
         - Dùng format ngắn gọn, chia đoạn 2-3 câu. Trình bày rành mạch.
-        - Dùng icon (📊, 💡, 🌍, ⚠️) hoặc gạch đầu dòng để bài viết sinh động.
+        - Dùng gạch đầu dòng để bài viết sinh động.
 
         PHẠM VI TRẢ LỜI:
         - Sẵn sàng bàn luận sâu về TẤT CẢ các chủ đề: Chính trị thế giới (Ví dụ: Bầu cử Mỹ, xung đột quân sự, FED...), kinh tế toàn cầu, tin tức xã hội Việt Nam.
@@ -243,11 +243,11 @@ async def ai_assistant(request: Request):
             reply_text = result['choices'][0]['message']['content']
             return {"reply": reply_text}
         else:
-            print("\n🚨 LỖI TỪ GROQ API:", response.text)
+            print("\n LỖI TỪ GROQ API:", response.text)
             raise HTTPException(status_code=response.status_code, detail="Lỗi phía server Groq")
 
     except Exception as e:
-        print("\n🚨 LỖI HỆ THỐNG BACKEND:", str(e))
+        print("\n LỖI HỆ THỐNG BACKEND:", str(e))
         raise HTTPException(status_code=500, detail="Mất kết nối API")
 
 
