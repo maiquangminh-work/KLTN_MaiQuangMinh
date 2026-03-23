@@ -564,7 +564,7 @@ function App() {
             </div>
 
             <div className="chat-header">
-               <span style={{marginLeft: '25px'}}> TRỢ LÝ AI BANK</span>
+               <span style={{marginLeft: '25px'}}>TRỢ LÝ AI</span>
                <button onClick={() => setIsChatOpen(false)} style={{background:'none', border:'none', color:'#848e9c', cursor:'pointer', fontSize: '20px'}}>×</button>
             </div>
             <div className="chat-messages">
