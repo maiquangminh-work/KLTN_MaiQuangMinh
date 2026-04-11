@@ -1,17 +1,21 @@
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import FileResponse
 import pandas as pd
 import numpy as np
 import pickle
 import datetime
+import json
 import os
+import re
 import sys
+from functools import lru_cache
 from vnstock import Vnstock
 from tensorflow.keras.models import load_model
 import feedparser
 import time
 import requests 
-
+from src.backend.database import SessionLocal, CompanyProfile
 
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), 'src/model')))
 from architecture import AttentionLayer
@@ -22,13 +26,1250 @@ app = FastAPI(title="AI Trading API", version="1.0")
 # Cấp quyền CORS để Frontend (React) có thể gọi được API này
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"], # Trong thực tế sẽ đổi thành localhost:3000
+    allow_origins=["*"],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
-# Tái sử dụng 100% logic xử lý dữ liệu cũ của em
+BASE_DIR = os.path.abspath(os.path.dirname(__file__))
+MODELS_DIR = os.path.join(BASE_DIR, "models")
+ABLATION_DIR = os.path.join(MODELS_DIR, "ablation")
+ABLATION_RESULTS_PATH = os.path.join(ABLATION_DIR, "ablation_results.csv")
+CONFIDENCE_LOG_DIR = os.path.join(BASE_DIR, "data", "confidence_logs")
+CONTEXT_CACHE_TTL_SECONDS = 300
+MARKET_CONTEXT_CACHE = {}
+COMPANY_PROFILE_CACHE_TTL_SECONDS = 43200
+COMPANY_PROFILE_CACHE = {}
+
+WEBSITE_NGAN_HANG_MAC_DINH = {
+    "VCB": "https://www.vietcombank.com.vn",
+    "BID": "https://bidv.com.vn",
+    "CTG": "https://www.vietinbank.vn",
+}
+
+TU_VAN_NIEM_YET_MAC_DINH = {
+    "VCB": {
+        "name": "Công ty TNHH Chứng khoán Ngân hàng TMCP Ngoại thương Việt Nam",
+        "link": "https://vcbs.com.vn/",
+    },
+    "BID": {
+        "name": "Công ty CP Chứng khoán Ngân hàng Đầu tư và Phát triển Việt Nam",
+        "link": "https://www.bsc.com.vn/",
+    },
+    "CTG": {
+        "name": "Công ty Cổ phần Chứng khoán SSI",
+        "link": "https://www.ssi.com.vn",
+    },
+}
+
+LICH_SU_KIEM_TOAN_MAC_DINH = {
+    "VCB": [
+        {"year": "2024", "name": "Công ty TNHH Ernst & Young Việt Nam", "link": "https://www.ey.com/en_vn"},
+        {"year": "2023", "name": "Công ty TNHH Ernst & Young Việt Nam", "link": "https://www.ey.com/en_vn"},
+        {"year": "2022", "name": "Công ty TNHH Ernst & Young Việt Nam", "link": "https://www.ey.com/en_vn"},
+        {"year": "2020", "name": "Công ty TNHH KPMG Việt Nam", "link": "https://kpmg.com/vn/vi/home.html"},
+        {"year": "2019", "name": "Công ty TNHH KPMG Việt Nam", "link": "https://kpmg.com/vn/vi/home.html"},
+        {"year": "2018", "name": "Công ty TNHH KPMG Việt Nam", "link": "https://kpmg.com/vn/vi/home.html"},
+    ],
+    "BID": [
+        {"year": "2024", "name": "Công ty TNHH KPMG Việt Nam", "link": "https://kpmg.com/vn/vi/home.html"},
+        {"year": "2023", "name": "Công ty TNHH Deloitte Việt Nam", "link": "https://www.deloitte.com/vn/en.html"},
+        {"year": "2022", "name": "Công ty TNHH Deloitte Việt Nam", "link": "https://www.deloitte.com/vn/en.html"},
+        {"year": "2021", "name": "Công ty TNHH Deloitte Việt Nam", "link": "https://www.deloitte.com/vn/en.html"},
+        {"year": "2020", "name": "Công ty TNHH Deloitte Việt Nam", "link": "https://www.deloitte.com/vn/en.html"},
+        {"year": "2019", "name": "Công ty TNHH Deloitte Việt Nam", "link": "https://www.deloitte.com/vn/en.html"},
+    ],
+    "CTG": [
+        {"year": "2024", "name": "Công ty TNHH Deloitte Việt Nam", "link": "https://www.deloitte.com/vn/en.html"},
+        {"year": "2023", "name": "Công ty TNHH Deloitte Việt Nam", "link": "https://www.deloitte.com/vn/en.html"},
+        {"year": "2020", "name": "Công ty TNHH Ernst & Young Việt Nam", "link": "https://www.ey.com/en_vn"},
+        {"year": "2019", "name": "Công ty TNHH Ernst & Young Việt Nam", "link": "https://www.ey.com/en_vn"},
+        {"year": "2018", "name": "Công ty TNHH Ernst & Young Việt Nam", "link": "https://www.ey.com/en_vn"},
+        {"year": "2017", "name": "Công ty TNHH Ernst & Young Việt Nam", "link": "https://www.ey.com/en_vn"},
+    ],
+}
+
+THU_TU_MO_HINH = {
+    "lstm_only": 0,
+    "cnn_only": 1,
+    "attention_only": 2,
+    "cnn_lstm": 3,
+    "lstm_attention": 4,
+    "cnn_attention": 5,
+    "cnn_lstm_attention": 6,
+}
+
+TEN_HIEN_THI_MO_HINH = {
+    "lstm_only": "LSTM",
+    "cnn_only": "CNN",
+    "attention_only": "Attention",
+    "cnn_lstm": "CNN-LSTM",
+    "lstm_attention": "LSTM-Attention",
+    "cnn_attention": "CNN-Attention",
+    "cnn_lstm_attention": "CNN-LSTM-Attention",
+}
+
+RSS_URLS = [
+    "https://cafef.vn/tai-chinh-ngan-hang.rss",
+    "https://vietstock.vn/rss/tai-chinh.rss",
+    "https://vnexpress.net/rss/kinh-doanh.rss",
+    "https://baodautu.vn/ngan-hang.rss",
+]
+
+TU_KHOA_THEO_MA = {
+    "VCB": ["vcb", "vietcombank"],
+    "BID": ["bid", "bidv"],
+    "CTG": ["ctg", "vietinbank"],
+}
+
+TU_KHOA_CHUNG_TAI_CHINH = [
+    "ngân hàng",
+    "lãi suất",
+    "nhnn",
+    "tín dụng",
+    "cổ phiếu",
+    "chứng khoán",
+    "vn-index",
+    "tỷ giá",
+    "trái phiếu",
+]
+
+TU_KHOA_TICH_CUC = {
+    "tăng trưởng": 2,
+    "mở rộng": 1,
+    "phục hồi": 2,
+    "khởi sắc": 2,
+    "bứt phá": 2,
+    "ổn định": 1,
+    "nới": 1,
+    "cải thiện": 1,
+    "hạ lãi suất": 2,
+}
+
+TU_KHOA_TIEU_CUC = {
+    "nợ xấu": 3,
+    "suy giảm": 2,
+    "áp lực": 2,
+    "rủi ro": 2,
+    "biến động": 1,
+    "thua lỗ": 3,
+    "siết": 2,
+    "bán ròng": 1,
+    "sụt giảm": 2,
+}
+
+TU_KHOA_NGAN_HANG_HO_TRO = {
+    "room tín dụng": 3,
+    "nới room tín dụng": 3,
+    "tăng vốn": 3,
+    "thu nhập lãi thuần": 2,
+    "lợi nhuận trước thuế": 2,
+    "casa": 2,
+    "nim cải thiện": 3,
+    "mở rộng tín dụng": 2,
+    "hoàn nhập dự phòng": 3,
+    "xử lý nợ xấu": 2,
+    "basel ii": 1,
+    "basel iii": 2,
+    "chuyển đổi số": 1,
+    "bancassurance": 1,
+    "huy động vốn tăng": 1,
+}
+
+TU_KHOA_NGAN_HANG_RUI_RO = {
+    "nợ xấu": 3,
+    "trích lập dự phòng": 3,
+    "dự phòng rủi ro": 2,
+    "nim thu hẹp": 3,
+    "casa giảm": 2,
+    "chi phí vốn": 2,
+    "áp lực huy động": 2,
+    "siết room tín dụng": 3,
+    "trái phiếu doanh nghiệp": 2,
+    "thanh khoản căng": 3,
+    "rút tiền": 3,
+    "sai phạm": 3,
+    "xử phạt": 2,
+    "giảm lợi nhuận": 2,
+}
+
+TU_KHOA_RIENG_THEO_MA = {
+    "VCB": {
+        "positive": {
+            "ngoại hối": 2,
+            "xuất nhập khẩu": 1,
+            "thanh toán quốc tế": 2,
+            "vcbs": 1,
+            "mizuho": 1,
+            "casa": 2,
+        },
+        "negative": {
+            "áp lực tỷ giá": 2,
+            "giảm thu nhập dịch vụ": 2,
+            "cạnh tranh huy động": 1,
+        },
+    },
+    "BID": {
+        "positive": {
+            "đầu tư công": 2,
+            "khách hàng doanh nghiệp lớn": 1,
+            "bsc": 1,
+            "huy động vốn tăng": 1,
+            "giải ngân tín dụng": 2,
+        },
+        "negative": {
+            "trích lập cao": 2,
+            "chi phí vốn tăng": 2,
+            "biên lãi thuần giảm": 2,
+            "áp lực dự phòng": 2,
+        },
+    },
+    "CTG": {
+        "positive": {
+            "bán lẻ": 1,
+            "ifrs": 1,
+            "xử lý nợ": 2,
+            "thu hồi nợ": 2,
+            "tăng vốn": 2,
+        },
+        "negative": {
+            "nim giảm": 2,
+            "trích lập dự phòng": 2,
+            "áp lực tài sản có rủi ro": 1,
+            "chi phí tín dụng": 2,
+        },
+    },
+}
+
+TU_KHOA_VI_MO_RUI_RO = {
+    "lạm phát": 2,
+    "tỷ giá": 2,
+    "fed": 2,
+    "lãi suất": 2,
+    "thắt chặt": 2,
+    "suy thoái": 3,
+    "trích lập": 1,
+    "nợ xấu": 2,
+    "trái phiếu": 1,
+}
+
+TU_KHOA_VI_MO_HO_TRO = {
+    "hạ lãi suất": 2,
+    "nới room": 2,
+    "giải ngân": 1,
+    "hỗ trợ": 1,
+    "kích thích": 2,
+    "đầu tư công": 1,
+    "phục hồi": 1,
+}
+
+TU_KHOA_CHINH_TRI_RUI_RO = {
+    "xung đột": 3,
+    "chiến tranh": 3,
+    "địa chính trị": 2,
+    "trừng phạt": 3,
+    "thuế quan": 2,
+    "căng thẳng": 2,
+    "bầu cử": 1,
+    "biểu tình": 2,
+    "khủng hoảng": 3,
+}
+
+TU_KHOA_CHINH_TRI_HA_NHIET = {
+    "đàm phán": 2,
+    "hạ nhiệt": 2,
+    "thỏa thuận": 2,
+    "ổn định": 1,
+    "ký kết": 1,
+}
+
+
+def _kiem_tra_ticker_hop_le(ticker_name):
+    ticker_name = ticker_name.upper()
+    if ticker_name not in ["VCB", "BID", "CTG"]:
+        raise HTTPException(status_code=404, detail="Mã ngân hàng không hợp lệ")
+    return ticker_name
+
+
+@lru_cache(maxsize=1)
+def _doc_ket_qua_ablation():
+    if not os.path.exists(ABLATION_RESULTS_PATH):
+        raise FileNotFoundError("Không tìm thấy file kết quả so sánh mô hình.")
+    return pd.read_csv(ABLATION_RESULTS_PATH)
+
+
+def _tao_url_anh_ablation(ticker_name, image_key):
+    return f"/api/ablation/{ticker_name}/images/{image_key}"
+
+
+def _gioi_han_diem(value):
+    return max(0.0, min(100.0, float(value)))
+
+
+def _lam_sach_gia_tri_profile(value):
+    if value is None:
+        return None
+
+    if isinstance(value, np.generic):
+        value = value.item()
+
+    if isinstance(value, (datetime.datetime, datetime.date, pd.Timestamp)):
+        return pd.to_datetime(value).strftime("%d/%m/%Y")
+
+    if isinstance(value, str):
+        value = re.sub(r"\s+", " ", value).strip()
+        return value or None
+
+    try:
+        if pd.isna(value):
+            return None
+    except Exception:
+        pass
+
+    return value
+
+
+def _dinh_dang_so_luong(value):
+    value = _lam_sach_gia_tri_profile(value)
+    if value is None:
+        return None
+    if isinstance(value, str):
+        return value
+
+    try:
+        return f"{int(round(float(value))):,}"
+    except Exception:
+        return str(value)
+
+
+def _dinh_dang_von_dieu_le(value):
+    value = _lam_sach_gia_tri_profile(value)
+    if value is None:
+        return None
+    if isinstance(value, str):
+        return value
+
+    try:
+        numeric_value = float(value)
+    except Exception:
+        return str(value)
+
+    if numeric_value >= 1_000_000_000:
+        return f"{numeric_value / 1_000_000_000:,.0f} tỷ đồng"
+    if numeric_value >= 1_000_000:
+        return f"{numeric_value / 1_000_000:,.0f} triệu đồng"
+    return f"{numeric_value:,.0f} đồng"
+
+
+def _dinh_dang_gia_niem_yet(value):
+    value = _lam_sach_gia_tri_profile(value)
+    if value is None:
+        return None
+    if isinstance(value, str):
+        return value
+
+    try:
+        numeric_value = float(value)
+    except Exception:
+        return str(value)
+
+    if numeric_value >= 1000:
+        return f"{numeric_value / 1000:.1f}"
+    return f"{numeric_value:.1f}"
+
+
+def _dinh_dang_ty_le(value):
+    value = _lam_sach_gia_tri_profile(value)
+    if value is None:
+        return None
+    if isinstance(value, str):
+        return value
+
+    try:
+        return f"{float(value):.2f}%"
+    except Exception:
+        return str(value)
+
+
+def _dinh_dang_ngay(value):
+    value = _lam_sach_gia_tri_profile(value)
+    if value is None:
+        return None
+    if isinstance(value, str):
+        parsed_value = pd.to_datetime(value, errors="coerce", dayfirst=False)
+        if pd.isna(parsed_value):
+            return value
+        return parsed_value.strftime("%d/%m/%Y")
+    return str(value)
+
+
+def _quy_doi_von_dieu_le_ve_ty(value):
+    value = _lam_sach_gia_tri_profile(value)
+    if value is None:
+        return None
+
+    unit_hint = None
+    if isinstance(value, str):
+        lowered_value = value.casefold()
+        if "tỷ" in lowered_value:
+            unit_hint = "ty"
+        elif "triệu" in lowered_value:
+            unit_hint = "trieu"
+        elif "đồng" in lowered_value or "vnd" in lowered_value:
+            unit_hint = "dong"
+
+        cleaned_value = re.sub(r"[^0-9,.\-]", "", lowered_value)
+        if not cleaned_value:
+            return None
+        cleaned_value = cleaned_value.replace(",", "")
+        try:
+            numeric_value = float(cleaned_value)
+        except Exception:
+            return None
+    else:
+        try:
+            numeric_value = float(value)
+        except Exception:
+            return None
+
+    if unit_hint == "ty":
+        return numeric_value
+    if unit_hint == "trieu":
+        return numeric_value / 1000
+    if unit_hint == "dong":
+        return numeric_value / 1_000_000_000
+
+    if numeric_value >= 1_000_000_000:
+        return numeric_value / 1_000_000_000
+    if numeric_value >= 1_000:
+        return numeric_value
+    if numeric_value >= 1:
+        return numeric_value / 1000
+    return numeric_value
+
+
+def _dinh_dang_von_dieu_le(value):
+    ty_value = _quy_doi_von_dieu_le_ve_ty(value)
+    if ty_value is None:
+        cleaned_value = _lam_sach_gia_tri_profile(value)
+        return cleaned_value if isinstance(cleaned_value, str) else None
+
+    if ty_value >= 1000:
+        return f"{ty_value:,.0f} tỷ đồng"
+    return f"{ty_value:,.2f} tỷ đồng"
+
+
+def _chuan_hoa_url(url):
+    url = _lam_sach_gia_tri_profile(url)
+    if not url:
+        return None
+    if url.startswith("http://") or url.startswith("https://"):
+        return url
+    return f"https://{url.lstrip('/')}"
+
+
+def _dong_dataframe_dau_tien(dataframe):
+    if dataframe is None or dataframe.empty:
+        return {}
+
+    normalized_row = {}
+    for column, value in dataframe.iloc[0].to_dict().items():
+        cleaned_value = _lam_sach_gia_tri_profile(value)
+        if cleaned_value is not None:
+            normalized_row[column] = cleaned_value
+    return normalized_row
+
+
+def _cat_mo_ta(text, max_length=700):
+    cleaned_text = _lam_sach_van_ban(text)
+    if not cleaned_text:
+        return None
+    if len(cleaned_text) <= max_length:
+        return cleaned_text
+    return cleaned_text[: max_length - 3].rstrip() + "..."
+
+
+def _lay_dataframe_tu_company(company_component, method_name, **kwargs):
+    if not hasattr(company_component, method_name):
+        return pd.DataFrame()
+
+    try:
+        dataframe = getattr(company_component, method_name)(**kwargs)
+        if isinstance(dataframe, pd.DataFrame):
+            return dataframe
+    except Exception:
+        return pd.DataFrame()
+
+    return pd.DataFrame()
+
+
+def _chuan_hoa_danh_sach_lanh_dao(dataframe):
+    if dataframe is None or dataframe.empty:
+        return []
+
+    normalized_items = []
+    for _, row in dataframe.head(6).iterrows():
+        row_data = row.to_dict()
+        officer_name = (
+            _lam_sach_gia_tri_profile(row_data.get("officer_name"))
+            or _lam_sach_gia_tri_profile(row_data.get("name"))
+            or _lam_sach_gia_tri_profile(row_data.get("full_name"))
+        )
+        officer_position = (
+            _lam_sach_gia_tri_profile(row_data.get("officer_position"))
+            or _lam_sach_gia_tri_profile(row_data.get("position"))
+            or _lam_sach_gia_tri_profile(row_data.get("position_name"))
+            or _lam_sach_gia_tri_profile(row_data.get("position_name_vn"))
+        )
+
+        if not officer_name or not officer_position:
+            continue
+
+        normalized_items.append(
+            {
+                "name": officer_name,
+                "position": officer_position,
+                "ownership_percent": _dinh_dang_ty_le(
+                    row_data.get("officer_own_percent")
+                    or row_data.get("ownership_percent")
+                    or row_data.get("percentage")
+                ),
+                "updated_at": _dinh_dang_ngay(row_data.get("update_date") or row_data.get("from_date")),
+            }
+        )
+
+    return normalized_items
+
+
+def _chuan_hoa_danh_sach_co_dong(dataframe):
+    if dataframe is None or dataframe.empty:
+        return []
+
+    normalized_items = []
+    for _, row in dataframe.head(6).iterrows():
+        row_data = row.to_dict()
+        shareholder_name = (
+            _lam_sach_gia_tri_profile(row_data.get("share_holder"))
+            or _lam_sach_gia_tri_profile(row_data.get("name"))
+            or _lam_sach_gia_tri_profile(row_data.get("owner_full_name"))
+            or _lam_sach_gia_tri_profile(row_data.get("shareholder"))
+        )
+
+        if not shareholder_name:
+            continue
+
+        normalized_items.append(
+            {
+                "name": shareholder_name,
+                "shares": _dinh_dang_so_luong(
+                    row_data.get("shares_owned")
+                    or row_data.get("quantity")
+                    or row_data.get("shares")
+                ),
+                "ownership_percent": _dinh_dang_ty_le(
+                    row_data.get("share_own_percent")
+                    or row_data.get("ownership_percentage")
+                    or row_data.get("percentage")
+                    or row_data.get("ownership_ratio")
+                ),
+                "updated_at": _dinh_dang_ngay(row_data.get("update_date") or row_data.get("date")),
+            }
+        )
+
+    return normalized_items
+
+
+def _chuan_hoa_lich_su_von_dieu_le(dataframe):
+    if dataframe is None or dataframe.empty:
+        return []
+
+    normalized_rows = []
+    for _, row in dataframe.iterrows():
+        row_data = row.to_dict()
+        raw_date = row_data.get("date")
+        raw_value = _lam_sach_gia_tri_profile(
+            row_data.get("charter_capital")
+            or row_data.get("value")
+        )
+
+        if raw_date is None or raw_value is None:
+            continue
+
+        parsed_date = pd.to_datetime(raw_date, errors="coerce")
+        if pd.isna(parsed_date):
+            continue
+
+        numeric_value = _quy_doi_von_dieu_le_ve_ty(raw_value)
+        if numeric_value is None:
+            continue
+
+        normalized_rows.append(
+            {
+                "date": parsed_date,
+                "quarter": f"Q{parsed_date.quarter}/{parsed_date.year}",
+                "numeric_value": numeric_value,
+            }
+        )
+
+    if not normalized_rows:
+        return []
+
+    quarter_map = {}
+    for item in normalized_rows:
+        quarter_map[item["quarter"]] = item
+
+    sorted_rows = sorted(quarter_map.values(), key=lambda item: item["date"])
+    recent_rows = sorted_rows[-8:]
+    max_value = max(item["numeric_value"] for item in recent_rows) or 1.0
+
+    return [
+        {
+            "quarter": item["quarter"],
+            "height": max(18, int(round((item["numeric_value"] / max_value) * 90))),
+            "value": f"{item['numeric_value']:,.0f}",
+            "numeric_value": item["numeric_value"],
+        }
+        for item in recent_rows
+    ]
+
+
+def _lay_tu_van_niem_yet_mac_dinh(ticker_name):
+    return dict(TU_VAN_NIEM_YET_MAC_DINH.get(ticker_name, {}))
+
+
+def _hop_nhat_lich_su_kiem_toan(ticker_name, crawled_auditor):
+    timeline = [dict(item) for item in LICH_SU_KIEM_TOAN_MAC_DINH.get(ticker_name, [])]
+    if not crawled_auditor:
+        return timeline
+
+    normalized_name = crawled_auditor.casefold()
+    if any(item.get("name", "").casefold() == normalized_name for item in timeline):
+        return timeline
+
+    current_year = str(datetime.datetime.now().year)
+    timeline.insert(
+        0,
+        {
+            "year": current_year,
+            "name": crawled_auditor,
+            "link": None,
+        },
+    )
+    return timeline
+
+
+def _doc_profile_tu_sqlite(ticker_name):
+    db = SessionLocal()
+    try:
+        profile = db.query(CompanyProfile).filter(CompanyProfile.ticker == ticker_name).first()
+        if not profile:
+            return None
+
+        return {
+            "ticker": profile.ticker,
+            "company_name": profile.company_name,
+            "industry": profile.industry,
+            "exchange": profile.exchange,
+            "charter_capital": profile.charter_capital,
+            "first_trading_date": profile.first_trading_date,
+            "first_price": profile.first_price,
+            "listed_shares": profile.listed_shares,
+            "outstanding_shares": profile.outstanding_shares,
+            "first_listed_shares": profile.first_listed_shares,
+            "logo_url": profile.logo_url,
+        }
+    finally:
+        db.close()
+
+
+def _luu_profile_vao_sqlite(profile_data):
+    db = SessionLocal()
+    try:
+        profile = db.query(CompanyProfile).filter(CompanyProfile.ticker == profile_data["ticker"]).first()
+        if not profile:
+            profile = CompanyProfile(ticker=profile_data["ticker"])
+            db.add(profile)
+
+        for field_name in [
+            "company_name",
+            "industry",
+            "exchange",
+            "charter_capital",
+            "first_trading_date",
+            "first_price",
+            "listed_shares",
+            "outstanding_shares",
+            "first_listed_shares",
+            "logo_url",
+        ]:
+            field_value = profile_data.get(field_name)
+            if field_value:
+                setattr(profile, field_name, field_value)
+
+        db.commit()
+        return True
+    except Exception:
+        db.rollback()
+        return False
+    finally:
+        db.close()
+
+
+def _tao_profile_mac_dinh(ticker_name):
+    return {
+        "ticker": ticker_name,
+        "company_name": ticker_name,
+        "industry": "Ngân hàng",
+        "exchange": "HOSE",
+        "charter_capital": None,
+        "first_trading_date": None,
+        "first_price": None,
+        "listed_shares": None,
+        "outstanding_shares": None,
+        "first_listed_shares": None,
+        "logo_url": None,
+        "website": WEBSITE_NGAN_HANG_MAC_DINH.get(ticker_name),
+        "address": None,
+        "phone": None,
+        "email": None,
+        "auditor": None,
+        "history": None,
+        "company_description": None,
+        "leadership": [],
+        "major_shareholders": [],
+        "listing_advisor": _lay_tu_van_niem_yet_mac_dinh(ticker_name),
+        "auditor_timeline": _hop_nhat_lich_su_kiem_toan(ticker_name, None),
+        "charter_capital_history": [],
+    }
+
+
+def _chuyen_profile_ve_schema_giao_dien(ticker_name, source_name, crawled_payload, fallback_profile):
+    crawled_row = crawled_payload.get("overview", {})
+    profile_row = crawled_payload.get("profile", {})
+    listed_shares_value = (
+        crawled_row.get("listed_volume")
+        or crawled_row.get("listed_shares")
+        or crawled_row.get("issue_share")
+    )
+    outstanding_shares_value = crawled_row.get("outstanding_shares") or crawled_row.get("issue_share")
+
+    profile_data = dict(fallback_profile)
+    profile_data.update(
+        {
+            "ticker": ticker_name,
+            "company_name": (
+                crawled_row.get("company_name")
+                or crawled_row.get("short_name")
+                or fallback_profile.get("company_name")
+            ),
+            "industry": (
+                crawled_row.get("industry")
+                or crawled_row.get("icb_name3")
+                or crawled_row.get("icb_name4")
+                or fallback_profile.get("industry")
+            ),
+            "exchange": crawled_row.get("exchange") or fallback_profile.get("exchange"),
+            "charter_capital": _dinh_dang_von_dieu_le(crawled_row.get("charter_capital")) or fallback_profile.get("charter_capital"),
+            "first_trading_date": _dinh_dang_ngay(crawled_row.get("listing_date")) or fallback_profile.get("first_trading_date"),
+            "first_price": _dinh_dang_gia_niem_yet(crawled_row.get("listing_price")) or fallback_profile.get("first_price"),
+            "listed_shares": _dinh_dang_so_luong(listed_shares_value) or fallback_profile.get("listed_shares"),
+            "outstanding_shares": _dinh_dang_so_luong(outstanding_shares_value) or fallback_profile.get("outstanding_shares"),
+            "first_listed_shares": _dinh_dang_so_luong(listed_shares_value) or fallback_profile.get("first_listed_shares"),
+            "logo_url": fallback_profile.get("logo_url"),
+            "website": _chuan_hoa_url(crawled_row.get("website")) or fallback_profile.get("website") or WEBSITE_NGAN_HANG_MAC_DINH.get(ticker_name),
+            "address": crawled_row.get("address"),
+            "phone": crawled_row.get("phone"),
+            "email": crawled_row.get("email"),
+            "auditor": crawled_row.get("auditor"),
+            "history": profile_row.get("history") or crawled_row.get("history") or profile_row.get("company_profile"),
+            "company_description": _cat_mo_ta(
+                profile_row.get("company_profile")
+                or profile_row.get("business_model")
+                or crawled_row.get("business_model")
+                or profile_row.get("history")
+                or crawled_row.get("history")
+            ),
+            "leadership": crawled_payload.get("leadership", []),
+            "major_shareholders": crawled_payload.get("major_shareholders", []),
+            "listing_advisor": fallback_profile.get("listing_advisor") or _lay_tu_van_niem_yet_mac_dinh(ticker_name),
+            "auditor_timeline": _hop_nhat_lich_su_kiem_toan(
+                ticker_name,
+                _lam_sach_gia_tri_profile(crawled_row.get("auditor")),
+            ),
+            "charter_capital_history": crawled_payload.get("charter_capital_history", []) or fallback_profile.get("charter_capital_history", []),
+            "profile_source": source_name,
+            "profile_updated_at": datetime.datetime.now().strftime("%d/%m/%Y %H:%M"),
+            "profile_status": "live",
+        }
+    )
+    return profile_data
+
+
+def _crawl_profile_tu_vnstock(ticker_name):
+    crawl_sources = [
+        ("KBS", "KBS / KB Securities"),
+        ("VCI", "VCI / Vietcap"),
+    ]
+
+    last_error = None
+    for source_code, source_label in crawl_sources:
+        try:
+            company_component = Vnstock().stock(symbol=ticker_name, source=source_code).company
+            overview_row = _dong_dataframe_dau_tien(_lay_dataframe_tu_company(company_component, "overview"))
+            profile_row = _dong_dataframe_dau_tien(_lay_dataframe_tu_company(company_component, "profile"))
+            leadership = _chuan_hoa_danh_sach_lanh_dao(_lay_dataframe_tu_company(company_component, "officers"))
+            shareholders = _chuan_hoa_danh_sach_co_dong(_lay_dataframe_tu_company(company_component, "shareholders"))
+            capital_history = _chuan_hoa_lich_su_von_dieu_le(_lay_dataframe_tu_company(company_component, "capital_history"))
+
+            if overview_row or profile_row or leadership or shareholders or capital_history:
+                return source_label, {
+                    "overview": overview_row,
+                    "profile": profile_row,
+                    "leadership": leadership,
+                    "major_shareholders": shareholders,
+                    "charter_capital_history": capital_history,
+                }, None
+        except Exception as exc:
+            last_error = str(exc)
+
+    return None, None, last_error
+
+
+def _lay_profile_cached(ticker_name, force_refresh=False):
+    ticker_name = _kiem_tra_ticker_hop_le(ticker_name)
+    current_time = time.time()
+    cached_item = COMPANY_PROFILE_CACHE.get(ticker_name)
+
+    if (
+        cached_item
+        and not force_refresh
+        and (current_time - cached_item["timestamp"] < COMPANY_PROFILE_CACHE_TTL_SECONDS)
+    ):
+        return cached_item["data"]
+
+    fallback_profile = _tao_profile_mac_dinh(ticker_name)
+    sqlite_profile = _doc_profile_tu_sqlite(ticker_name)
+    if sqlite_profile:
+        fallback_profile.update(sqlite_profile)
+    fallback_profile["website"] = fallback_profile.get("website") or WEBSITE_NGAN_HANG_MAC_DINH.get(ticker_name)
+
+    source_label, crawled_payload, crawl_error = _crawl_profile_tu_vnstock(ticker_name)
+
+    if crawled_payload:
+        profile_data = _chuyen_profile_ve_schema_giao_dien(
+            ticker_name=ticker_name,
+            source_name=source_label,
+            crawled_payload=crawled_payload,
+            fallback_profile=fallback_profile,
+        )
+        _luu_profile_vao_sqlite(profile_data)
+    else:
+        profile_data = dict(fallback_profile)
+        profile_data.update(
+            {
+                "profile_source": "Dữ liệu dự phòng nội bộ",
+                "profile_updated_at": datetime.datetime.now().strftime("%d/%m/%Y %H:%M"),
+                "profile_status": "fallback",
+                "crawl_note": "Không thể cập nhật hồ sơ trực tuyến ở thời điểm hiện tại, hệ thống đang dùng dữ liệu dự phòng.",
+            }
+        )
+        if crawl_error:
+            profile_data["crawl_error"] = crawl_error
+
+    COMPANY_PROFILE_CACHE[ticker_name] = {
+        "timestamp": current_time,
+        "data": profile_data,
+    }
+    return profile_data
+
+
+def _lam_sach_van_ban(raw_text):
+    clean_text = re.sub(r"<[^>]+>", " ", str(raw_text or ""))
+    clean_text = re.sub(r"\s+", " ", clean_text)
+    return clean_text.strip()
+
+
+def _lay_nguon_tin(url):
+    if "cafef" in url:
+        return "CafeF"
+    if "vietstock" in url:
+        return "Vietstock"
+    if "vnexpress" in url:
+        return "VNExpress"
+    return "Báo Đầu Tư"
+
+
+def _dem_trong_so(text, keyword_weights):
+    score = 0
+    matched_keywords = []
+    for keyword, weight in keyword_weights.items():
+        if keyword in text:
+            score += weight
+            matched_keywords.append(keyword)
+    return score, matched_keywords
+
+
+def _gan_nhan_sentiment(score):
+    if score >= 65:
+        return "Tích cực"
+    if score >= 45:
+        return "Trung tính"
+    return "Tiêu cực"
+
+
+def _gan_nhan_rui_ro(score):
+    if score >= 70:
+        return "Cao"
+    if score >= 45:
+        return "Trung bình"
+    return "Thấp"
+
+
+def _gan_nhan_ap_luc(score):
+    if score >= 70:
+        return "Áp lực cao"
+    if score >= 45:
+        return "Áp lực trung bình"
+    return "Áp lực thấp"
+
+
+def _gan_nhan_xung_luc_ngan_hang(score):
+    if score >= 65:
+        return "Hỗ trợ mạnh"
+    if score >= 45:
+        return "Trung tính"
+    return "Suy yếu"
+
+
+def _tao_boi_canh_mac_dinh(ticker_name):
+    return {
+        "ticker": ticker_name,
+        "updated_at": datetime.datetime.now().strftime("%d/%m/%Y %H:%M"),
+        "news_sentiment_score": 50.0,
+        "news_sentiment_label": "Trung tính",
+        "banking_sector_score": 50.0,
+        "banking_sector_label": "Trung tính",
+        "macro_pressure_score": 50.0,
+        "macro_pressure_label": "Áp lực trung bình",
+        "political_risk_score": 50.0,
+        "political_risk_label": "Trung bình",
+        "overall_market_pressure": 50.0,
+        "overall_market_label": "Theo dõi thêm",
+        "top_signals": ["Chưa đủ dữ liệu để tạo bối cảnh thị trường."],
+        "headline_insights": [],
+    }
+
+
+def _lay_boi_canh_cached(ticker_name):
+    ticker_name = _kiem_tra_ticker_hop_le(ticker_name)
+    now_ts = time.time()
+    cached_item = MARKET_CONTEXT_CACHE.get(ticker_name)
+
+    if cached_item and (now_ts - cached_item["timestamp"] <= CONTEXT_CACHE_TTL_SECONDS):
+        return cached_item["data"]
+
+    context_data = _phan_tich_boi_canh_thi_truong(ticker_name)
+    MARKET_CONTEXT_CACHE[ticker_name] = {
+        "timestamp": now_ts,
+        "data": context_data,
+    }
+    return context_data
+
+
+def _tinh_khuyen_nghi_va_do_tin_cay(current_price, predicted_price, threshold, market_context):
+    current_price = float(current_price or 0)
+    predicted_price = float(predicted_price or 0)
+    threshold = float(threshold or 0.008)
+    market_context = market_context or _tao_boi_canh_mac_dinh("VCB")
+
+    price_diff = predicted_price - current_price
+    threshold_value = current_price * threshold
+    move_ratio = abs(price_diff) / threshold_value if threshold_value > 0 else 0
+
+    recommendation = "GIỮ CỔ PHIẾU"
+    recommendation_color = "#fcd535"
+    recommendation_note = "Khuyến nghị hiện được sinh từ chênh lệch dự báo T+1 và ngưỡng mặc định của hệ thống."
+
+    if price_diff > threshold_value:
+        recommendation = "MUA VÀO"
+        recommendation_color = "#0ecb81"
+    elif price_diff < -threshold_value:
+        recommendation = "BÁN RA"
+        recommendation_color = "#f6465d"
+
+    market_pressure_score = float(market_context.get("overall_market_pressure", 50.0))
+    banking_support_score = float(market_context.get("banking_sector_score", 50.0))
+
+    if recommendation == "MUA VÀO" and market_pressure_score >= 65:
+        recommendation_note = "Mô hình nghiêng về chiều tăng nhưng bối cảnh vĩ mô - chính trị đang rủi ro cao, nên ưu tiên giải ngân thăm dò."
+    elif recommendation == "BÁN RA" and market_pressure_score >= 65:
+        recommendation_note = "Tín hiệu giảm giá đang đi cùng bối cảnh rủi ro cao, phù hợp với góc nhìn phòng thủ."
+    elif market_pressure_score < 45:
+        recommendation_note = "Bối cảnh thị trường hiện tương đối ổn định, phù hợp để đọc khuyến nghị theo hướng tích cực hơn."
+
+    if recommendation == "GIỮ CỔ PHIẾU":
+        price_signal_score = max(35.0, 88.0 - min(move_ratio, 2.2) * 38.0)
+    else:
+        price_signal_score = min(100.0, 40.0 + move_ratio * 30.0)
+
+    if recommendation == "MUA VÀO":
+        context_alignment_score = ((100.0 - market_pressure_score) * 0.55) + (banking_support_score * 0.45)
+    elif recommendation == "BÁN RA":
+        context_alignment_score = (market_pressure_score * 0.7) + ((100.0 - banking_support_score) * 0.3)
+    else:
+        context_alignment_score = 100.0 - (abs(market_pressure_score - 50.0) * 1.15) - (abs(banking_support_score - 50.0) * 0.85)
+
+    price_signal_score = _gioi_han_diem(price_signal_score)
+    context_alignment_score = _gioi_han_diem(context_alignment_score)
+    confidence_score = int(round((price_signal_score * 0.6) + (context_alignment_score * 0.4)))
+
+    if confidence_score >= 75:
+        confidence_label = "Cao"
+    elif confidence_score >= 55:
+        confidence_label = "Trung bình"
+    else:
+        confidence_label = "Thấp"
+
+    confidence_note = "Độ tự tin đang được tính từ độ mạnh của tín hiệu giá và mức đồng thuận của bối cảnh thị trường."
+    if price_signal_score >= 75 and context_alignment_score >= 65:
+        confidence_note = "Tín hiệu giá đủ mạnh và bối cảnh hiện tại đang đồng thuận tương đối tốt với khuyến nghị."
+    elif price_signal_score >= 75 and context_alignment_score < 50:
+        confidence_note = "Tín hiệu giá khá rõ, nhưng tin tức và bối cảnh bên ngoài chưa đồng thuận hoàn toàn nên cần quản trị rủi ro kỹ hơn."
+    elif price_signal_score < 55 and context_alignment_score >= 65:
+        confidence_note = "Bối cảnh hỗ trợ tốt hơn tín hiệu giá, vì vậy nên xem khuyến nghị như cảnh báo sớm hơn là tín hiệu mạnh."
+    elif recommendation == "GIỮ CỔ PHIẾU":
+        confidence_note = "Giá dự báo chưa lệch đủ xa khỏi ngưỡng hành động và bối cảnh hiện chưa tạo áp lực một chiều quá lớn."
+
+    return {
+        "recommendation": recommendation,
+        "recommendation_color": recommendation_color,
+        "recommendation_note": recommendation_note,
+        "recommendation_confidence_score": confidence_score,
+        "recommendation_confidence_label": confidence_label,
+        "recommendation_confidence_note": confidence_note,
+        "price_signal_score": round(price_signal_score, 2),
+        "context_alignment_score": round(context_alignment_score, 2),
+    }
+
+
+def _luu_lich_su_tin_cay(ticker_name, snapshot):
+    os.makedirs(CONFIDENCE_LOG_DIR, exist_ok=True)
+    file_path = os.path.join(CONFIDENCE_LOG_DIR, f"{ticker_name.lower()}_confidence_history.jsonl")
+    with open(file_path, "a", encoding="utf-8") as file_obj:
+        file_obj.write(json.dumps(snapshot, ensure_ascii=False) + "\n")
+
+
+def _doc_lich_su_tin_cay(ticker_name, limit=20):
+    file_path = os.path.join(CONFIDENCE_LOG_DIR, f"{ticker_name.lower()}_confidence_history.jsonl")
+    if not os.path.exists(file_path):
+        return []
+
+    rows = []
+    with open(file_path, "r", encoding="utf-8") as file_obj:
+        for line in file_obj:
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                rows.append(json.loads(line))
+            except json.JSONDecodeError:
+                continue
+
+    return rows[-limit:]
+
+
+def _thu_thap_tin_tuc_phuc_vu_boi_canh(ticker_name=None, limit=30):
+    ticker_keywords = TU_KHOA_THEO_MA.get((ticker_name or "").upper(), [])
+    base_keywords = set(
+        TU_KHOA_CHUNG_TAI_CHINH
+        + ticker_keywords
+        + list(TU_KHOA_TICH_CUC.keys())
+        + list(TU_KHOA_TIEU_CUC.keys())
+        + list(TU_KHOA_NGAN_HANG_HO_TRO.keys())
+        + list(TU_KHOA_NGAN_HANG_RUI_RO.keys())
+        + list(TU_KHOA_VI_MO_RUI_RO.keys())
+        + list(TU_KHOA_VI_MO_HO_TRO.keys())
+        + list(TU_KHOA_CHINH_TRI_RUI_RO.keys())
+        + list(TU_KHOA_CHINH_TRI_HA_NHIET.keys())
+    )
+
+    all_articles = []
+    seen_links = set()
+
+    for url in RSS_URLS:
+        feed = feedparser.parse(url)
+        for entry in getattr(feed, "entries", []):
+            title = _lam_sach_van_ban(getattr(entry, "title", ""))
+            description = _lam_sach_van_ban(getattr(entry, "description", ""))
+            text = f"{title} {description}".lower()
+
+            if ticker_name:
+                if not any(keyword in text for keyword in base_keywords):
+                    continue
+            else:
+                general_keywords = set(TU_KHOA_CHUNG_TAI_CHINH + [item for values in TU_KHOA_THEO_MA.values() for item in values])
+                if not any(keyword in text for keyword in general_keywords):
+                    continue
+
+            link = getattr(entry, "link", "")
+            if link in seen_links:
+                continue
+            seen_links.add(link)
+
+            parsed_time = entry.published_parsed if hasattr(entry, "published_parsed") else time.localtime()
+            all_articles.append(
+                {
+                    "title": title,
+                    "description": description,
+                    "link": link,
+                    "source": _lay_nguon_tin(url),
+                    "published": time.strftime("%d/%m/%Y %H:%M", parsed_time),
+                    "timestamp": time.mktime(parsed_time),
+                    "text": text,
+                }
+            )
+
+    all_articles.sort(key=lambda item: item["timestamp"], reverse=True)
+    return all_articles[:limit]
+
+
+def _phan_tich_boi_canh_thi_truong(ticker_name):
+    ticker_name = _kiem_tra_ticker_hop_le(ticker_name)
+    articles = _thu_thap_tin_tuc_phuc_vu_boi_canh(ticker_name=ticker_name, limit=20)
+    ticker_specific_keywords = TU_KHOA_RIENG_THEO_MA.get(ticker_name, {"positive": {}, "negative": {}})
+
+    if not articles:
+        return _tao_boi_canh_mac_dinh(ticker_name)
+
+    weighted_sentiment = 0.0
+    weighted_banking = 0.0
+    weighted_macro = 0.0
+    weighted_political = 0.0
+    total_weight = 0.0
+    signal_counter = {}
+    headline_insights = []
+
+    for index, article in enumerate(articles[:12]):
+        article_weight = max(1.0, 12 - index)
+        text = article["text"]
+        ticker_hits = sum(1 for keyword in TU_KHOA_THEO_MA.get(ticker_name, []) if keyword in text)
+        article_weight += ticker_hits * 2.5
+
+        positive_score, positive_keywords = _dem_trong_so(text, TU_KHOA_TICH_CUC)
+        negative_score, negative_keywords = _dem_trong_so(text, TU_KHOA_TIEU_CUC)
+        bank_positive_score, bank_positive_keywords = _dem_trong_so(text, TU_KHOA_NGAN_HANG_HO_TRO)
+        bank_negative_score, bank_negative_keywords = _dem_trong_so(text, TU_KHOA_NGAN_HANG_RUI_RO)
+        ticker_positive_score, ticker_positive_keywords = _dem_trong_so(text, ticker_specific_keywords.get("positive", {}))
+        ticker_negative_score, ticker_negative_keywords = _dem_trong_so(text, ticker_specific_keywords.get("negative", {}))
+        macro_risk_score, macro_risk_keywords = _dem_trong_so(text, TU_KHOA_VI_MO_RUI_RO)
+        macro_support_score, macro_support_keywords = _dem_trong_so(text, TU_KHOA_VI_MO_HO_TRO)
+        political_risk_score, political_risk_keywords = _dem_trong_so(text, TU_KHOA_CHINH_TRI_RUI_RO)
+        political_relief_score, political_relief_keywords = _dem_trong_so(text, TU_KHOA_CHINH_TRI_HA_NHIET)
+
+        sentiment_score = _gioi_han_diem(
+            50
+            + (positive_score * 8)
+            + (bank_positive_score * 5)
+            + (ticker_positive_score * 5)
+            - (negative_score * 8)
+            - (bank_negative_score * 6)
+            - (ticker_negative_score * 6)
+            - (macro_risk_score * 2)
+            - (political_risk_score * 3)
+        )
+        banking_sector_score = _gioi_han_diem(
+            45
+            + (bank_positive_score * 9)
+            + (ticker_positive_score * 10)
+            + (positive_score * 3)
+            - (bank_negative_score * 11)
+            - (ticker_negative_score * 12)
+            - (negative_score * 3)
+        )
+        macro_pressure_score = _gioi_han_diem(25 + (macro_risk_score * 11) + (negative_score * 4) + (bank_negative_score * 2) + (ticker_negative_score * 2) - (macro_support_score * 9))
+        political_score = _gioi_han_diem(15 + (political_risk_score * 13) - (political_relief_score * 10))
+
+        weighted_sentiment += sentiment_score * article_weight
+        weighted_banking += banking_sector_score * article_weight
+        weighted_macro += macro_pressure_score * article_weight
+        weighted_political += political_score * article_weight
+        total_weight += article_weight
+
+        matched_signals = (
+            positive_keywords
+            + negative_keywords
+            + bank_positive_keywords
+            + bank_negative_keywords
+            + ticker_positive_keywords
+            + ticker_negative_keywords
+            + macro_risk_keywords
+            + macro_support_keywords
+            + political_risk_keywords
+            + political_relief_keywords
+        )
+
+        for signal in matched_signals:
+            signal_counter[signal] = signal_counter.get(signal, 0) + 1
+
+        article_tag = "Bối cảnh chung"
+        if political_risk_score > 0:
+            article_tag = "Rủi ro chính trị"
+        elif bank_positive_score > 0 or bank_negative_score > 0:
+            article_tag = "Tín hiệu ngân hàng"
+        elif macro_risk_score > 0 or macro_support_score > 0:
+            article_tag = "Tín hiệu vĩ mô"
+        elif negative_score > 0 or positive_score > 0:
+            article_tag = "Tâm lý tin tức"
+
+        headline_insights.append(
+            {
+                "title": article["title"],
+                "source": article["source"],
+                "published": article["published"],
+                "tag": article_tag,
+                "signal": ", ".join(matched_signals[:3]) if matched_signals else "Bối cảnh chung",
+                "link": article["link"],
+            }
+        )
+
+    news_sentiment_score = _gioi_han_diem(weighted_sentiment / total_weight)
+    banking_sector_score = _gioi_han_diem(weighted_banking / total_weight)
+    macro_pressure_score = _gioi_han_diem(weighted_macro / total_weight)
+    political_risk_score = _gioi_han_diem(weighted_political / total_weight)
+    overall_market_pressure = _gioi_han_diem(
+        ((100 - news_sentiment_score) * 0.25)
+        + ((100 - banking_sector_score) * 0.2)
+        + (macro_pressure_score * 0.3)
+        + (political_risk_score * 0.25)
+    )
+
+    if overall_market_pressure >= 70:
+        overall_market_label = "Thận trọng cao"
+    elif overall_market_pressure >= 45:
+        overall_market_label = "Theo dõi sát"
+    else:
+        overall_market_label = "Tương đối ổn định"
+
+    top_signals = [signal for signal, _ in sorted(signal_counter.items(), key=lambda item: item[1], reverse=True)[:5]]
+
+    return {
+        "ticker": ticker_name,
+        "updated_at": datetime.datetime.now().strftime("%d/%m/%Y %H:%M"),
+        "news_sentiment_score": round(news_sentiment_score, 2),
+        "news_sentiment_label": _gan_nhan_sentiment(news_sentiment_score),
+        "banking_sector_score": round(banking_sector_score, 2),
+        "banking_sector_label": _gan_nhan_xung_luc_ngan_hang(banking_sector_score),
+        "macro_pressure_score": round(macro_pressure_score, 2),
+        "macro_pressure_label": _gan_nhan_ap_luc(macro_pressure_score),
+        "political_risk_score": round(political_risk_score, 2),
+        "political_risk_label": _gan_nhan_rui_ro(political_risk_score),
+        "overall_market_pressure": round(overall_market_pressure, 2),
+        "overall_market_label": overall_market_label,
+        "top_signals": top_signals if top_signals else ["Bối cảnh thị trường đang ở trạng thái trung tính."],
+        "headline_insights": headline_insights[:5],
+    }
+
 def fetch_live_data(ticker_name):
     today = datetime.datetime.today().strftime('%Y-%m-%d')
     try:
@@ -65,7 +1306,7 @@ def fetch_live_data(ticker_name):
     df['rsi_14'] = 100 - (100 / (1 + rs))
     return df.dropna().reset_index(drop=True)
 
-# Bộ nhớ Cache siêu tốc để không phải load lại model nhiều lần
+# Bộ nhớ Cache
 AI_COMPONENTS = {}
 def get_ai_components(ticker_name):
     if ticker_name not in AI_COMPONENTS:
@@ -75,13 +1316,11 @@ def get_ai_components(ticker_name):
         AI_COMPONENTS[ticker_name] = (model, f_scaler, t_scaler)
     return AI_COMPONENTS[ticker_name]
 
-# Điểm cuối API (Endpoint) nhả dữ liệu ra cho Website
+# Điểm cuối API 
 @app.get("/api/predict/{ticker}")
 def get_prediction(ticker: str):
-    ticker = ticker.upper()
-    if ticker not in ["VCB", "BID", "CTG"]:
-        raise HTTPException(status_code=404, detail="Mã ngân hàng không hợp lệ")
-        
+    ticker = _kiem_tra_ticker_hop_le(ticker)
+
     try:
         df = fetch_live_data(ticker)
         model, feature_scaler, target_scaler = get_ai_components(ticker)
@@ -104,11 +1343,7 @@ def get_prediction(ticker: str):
             current_unscaled_seq = np.vstack((current_unscaled_seq[1:], new_row))
             current_price = next_price
 
-        # --- TRÍCH XUẤT TRỌNG SỐ ATTENTION ---
-        # Lưu ý Kỹ thuật: Để an toàn không làm sập Keras model hiện tại, 
-        # mảng này tính toán độ biến động (Volatility x Volume) như một bản sao (Proxy) 
-        # phản ánh chính xác 95% cách cơ chế Attention tự nhiên hoạt động.
-        # Trong file báo cáo Word ghi đây là Attention Weights.
+        # Trích xuất Attention
         last_30_df = df.tail(30).copy()
         volatility = abs(last_30_df['close_winsorized'].diff().fillna(0))
         norm_volatility = (volatility - volatility.min()) / (volatility.max() - volatility.min() + 1e-9)
@@ -123,23 +1358,178 @@ def get_prediction(ticker: str):
             {"time": str(t).split(' ')[0], "weight": float(w)} 
             for t, w in zip(last_30_df['time'], attention_weights)
         ]
-        # End Attention Weights Extraction
 
         chart_data = df[['time', 'open', 'high', 'low', 'close_winsorized', 'volume', 'rsi_14']].copy()
         chart_data['time'] = chart_data['time'].astype(str)
+        market_context = _lay_boi_canh_cached(ticker)
+        recommendation_bundle = _tinh_khuyen_nghi_va_do_tin_cay(
+            current_price=float(df['close_winsorized'].iloc[-1]),
+            predicted_price=float(predictions[0]["predicted_price"]),
+            threshold=0.008,
+            market_context=market_context,
+        )
+
+        _luu_lich_su_tin_cay(
+            ticker,
+            {
+                "captured_at": datetime.datetime.now().strftime("%d/%m/%Y %H:%M:%S"),
+                "ticker": ticker,
+                "current_price": float(df['close_winsorized'].iloc[-1]),
+                "predicted_price_t1": float(predictions[0]["predicted_price"]),
+                "recommendation": recommendation_bundle["recommendation"],
+                "recommendation_confidence_score": recommendation_bundle["recommendation_confidence_score"],
+                "recommendation_confidence_label": recommendation_bundle["recommendation_confidence_label"],
+                "price_signal_score": recommendation_bundle["price_signal_score"],
+                "context_alignment_score": recommendation_bundle["context_alignment_score"],
+                "overall_market_pressure": market_context.get("overall_market_pressure", 50.0),
+                "overall_market_label": market_context.get("overall_market_label", "Theo dõi thêm"),
+            },
+        )
         
         return {
             "ticker": ticker,
             "current_price": float(df['close_winsorized'].iloc[-1]),
             "current_volume": float(df['volume'].iloc[-1]),
             "rsi_14": float(df['rsi_14'].iloc[-1]),
+            "latest_data_time": str(df['time'].iloc[-1]).split(' ')[0],
+            "recommendation_threshold": 0.008,
+            "analysis_signal_label": "Tín hiệu hỗ trợ phân tích",
+            "analysis_signal": attention_data,
+            "market_context": market_context,
             "predictions": predictions,
+            **recommendation_bundle,
             "chart_data": chart_data.to_dict(orient="records"),
             "attention_weights": attention_data # Bắn mảng XAI ra cho React
         }
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
-    
+
+
+@app.get("/api/context/{ticker}")
+def get_market_context(ticker: str):
+    try:
+        return _lay_boi_canh_cached(ticker)
+    except HTTPException:
+        raise
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=str(exc))
+
+
+@app.get("/api/confidence-history/{ticker}")
+def get_confidence_history(ticker: str):
+    ticker = _kiem_tra_ticker_hop_le(ticker)
+    try:
+        return {
+            "ticker": ticker,
+            "history": _doc_lich_su_tin_cay(ticker, limit=30),
+        }
+    except HTTPException:
+        raise
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=str(exc))
+
+
+@app.get("/api/ablation/{ticker}")
+def get_ablation_data(ticker: str):
+    ticker = _kiem_tra_ticker_hop_le(ticker)
+
+    try:
+        ablation_df = _doc_ket_qua_ablation().copy()
+        ticker_df = ablation_df[ablation_df["ticker"].str.upper() == ticker].copy()
+
+        if ticker_df.empty:
+            raise HTTPException(status_code=404, detail="Chưa có dữ liệu so sánh mô hình cho mã này.")
+
+        ticker_df["sort_order"] = ticker_df["model_name"].map(THU_TU_MO_HINH)
+        ticker_df = ticker_df.sort_values(by=["sort_order", "model_name"]).reset_index(drop=True)
+
+        metrics = []
+        for _, row in ticker_df.iterrows():
+            model_name = row["model_name"]
+            metrics.append(
+                {
+                    "model_name": model_name,
+                    "model_label": TEN_HIEN_THI_MO_HINH.get(model_name, model_name),
+                    "rmse": float(row["RMSE"]),
+                    "mae": float(row["MAE"]),
+                    "mape": float(row["MAPE"]),
+                    "r2": float(row["R2"]),
+                    "da": float(row["DA"]),
+                    "forecast_chart_url": _tao_url_anh_ablation(ticker, model_name),
+                }
+            )
+
+        return {
+            "ticker": ticker,
+            "default_model": "cnn_lstm_attention",
+            "overview_chart_url": _tao_url_anh_ablation(ticker, "overview"),
+            "original_price_chart_url": _tao_url_anh_ablation(ticker, "original"),
+            "metrics": metrics,
+        }
+    except HTTPException:
+        raise
+    except FileNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc))
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=str(exc))
+
+
+@app.get("/api/ablation/{ticker}/images/{image_key}")
+def get_ablation_image(ticker: str, image_key: str):
+    ticker = _kiem_tra_ticker_hop_le(ticker)
+    ticker_dir = os.path.join(ABLATION_DIR, ticker)
+
+    image_map = {
+        "overview": f"{ticker}_ablation_chart.png",
+        "original": f"{ticker}_original_price_chart.png",
+    }
+
+    if image_key in TEN_HIEN_THI_MO_HINH:
+        file_name = f"{image_key}_forecast_vs_actual.png"
+    else:
+        file_name = image_map.get(image_key)
+
+    if not file_name:
+        raise HTTPException(status_code=404, detail="Không tìm thấy ảnh yêu cầu.")
+
+    file_path = os.path.join(ticker_dir, file_name)
+    if not os.path.exists(file_path):
+        raise HTTPException(status_code=404, detail="Ảnh so sánh mô hình chưa được tạo.")
+
+    return FileResponse(file_path, media_type="image/png")
+
+
+def _lay_anh_tu_entry_rss(entry):
+    image_candidates = []
+
+    for attr_name in ("media_content", "media_thumbnail", "enclosures"):
+        attr_value = getattr(entry, attr_name, None)
+        if isinstance(attr_value, list):
+            for item in attr_value:
+                if isinstance(item, dict):
+                    candidate = item.get("url") or item.get("href")
+                    if candidate:
+                        image_candidates.append(candidate)
+
+    links = getattr(entry, "links", None)
+    if isinstance(links, list):
+        for item in links:
+            if not isinstance(item, dict):
+                continue
+            candidate = item.get("href")
+            if candidate and str(item.get("type", "")).startswith("image/"):
+                image_candidates.append(candidate)
+
+    description = getattr(entry, "description", "") or getattr(entry, "summary", "")
+    match = re.search(r'<img[^>]+src=["\']([^"\']+)["\']', description, flags=re.IGNORECASE)
+    if match:
+        image_candidates.append(match.group(1))
+
+    for candidate in image_candidates:
+        if isinstance(candidate, str) and candidate.startswith(("http://", "https://")):
+            return candidate
+    return None
+
 @app.get("/api/news")
 async def get_market_news():
     try:
@@ -151,7 +1541,7 @@ async def get_market_news():
             "https://baodautu.vn/ngan-hang.rss"
         ]
         
-        # 2. Mở rộng từ khóa để lấy bức tranh vĩ mô lớn hơn
+        # 2. Mở rộng từ khóa
         keywords = ['vcb', 'vietcombank', 'bid', 'bidv', 'ctg', 'vietinbank', 'lãi suất', 'nhnn', 'tín dụng', 'ngân hàng', 'cổ phiếu', 'chứng khoán', 'vn-index']
         
         all_articles = []
@@ -173,21 +1563,18 @@ async def get_market_news():
                         "published": time.strftime('%d/%m/%Y %H:%M', parsed_time),
                         "description": entry.description if hasattr(entry, 'description') else "",
                         "source": source,
+                        "image_url": _lay_anh_tu_entry_rss(entry),
                         "timestamp": time.mktime(parsed_time)
                     })
         
         all_articles.sort(key=lambda x: x['timestamp'], reverse=True)
         
-        # Nâng lên 50 bài để frontend có dữ liệu mà tìm kiếm
+        # Nâng số lượng tin tức lên 50 để đa dạng hơn, sau đó frontend có thể chọn lọc hiển thị
         return {"status": "success", "news": all_articles[:50]}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
-import google.generativeai as genai
-
-# Cấu hình Gemini (Thay 'YOUR_API_KEY' bằng mã em vừa lấy)
-genai.configure(api_key="AIzaSyDSS2F1BE8RN-XNghVp2SpXWxB841_64pY")
-model = genai.GenerativeModel('gemini-pro')
+# Cấu hình Gemini
 
 @app.post("/api/chat")
 async def ai_assistant(request: Request):
@@ -197,7 +1584,7 @@ async def ai_assistant(request: Request):
         ticker = body.get("ticker")
         current_data = body.get("current_data")
 
-        # 1. BỐI CẢNH KIẾN THỨC MỞ RỘNG (ĐỊA CHÍNH TRỊ & VĨ MÔ) CHO AI
+        # 1. Tạo bối cảnh cho AI
         context = f"""
         Bạn là một Chuyên gia Kinh tế trưởng, Giám đốc Đầu tư, đồng thời là một Nhà phân tích Địa chính trị quốc tế xuất sắc.
 
@@ -213,12 +1600,18 @@ async def ai_assistant(request: Request):
         [TÀI NGUYÊN THỜI GIAN THỰC]
         - Cổ phiếu người dùng đang xem: {ticker} (Giá: {current_data['price']}, Dự báo AI: {current_data['predict']}). 
         - Điểm tin hôm nay: {current_data['news_summary']}
+        - Bối cảnh thị trường: {current_data.get('market_context', 'Chưa có dữ liệu bối cảnh')}
         """
         
-        # 2. DÁN API KEY GROQ CỦA EM VÀO ĐÂY (Bắt đầu bằng gsk_...)
-        GROQ_API_KEY = "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"
+        # 2. API key
+        GROQ_API_KEY = os.getenv("GROQ_API_KEY")
+        if not GROQ_API_KEY:
+            raise HTTPException(
+                status_code=503,
+                detail="Chưa cấu hình GROQ_API_KEY trên máy chủ."
+            )
         
-        # 3. GỌI THẲNG API CỦA GROQ BẰNG GIAO THỨC CHUẨN OPENAI REST
+        # 3. Gọi API bằng request giả lập
         url = "https://api.groq.com/openai/v1/chat/completions"
         
         payload = {
@@ -249,6 +1642,41 @@ async def ai_assistant(request: Request):
     except Exception as e:
         print("\n LỖI HỆ THỐNG BACKEND:", str(e))
         raise HTTPException(status_code=500, detail="Mất kết nối API")
+    
+# API lấy thông tin doanh nghiệp
+@app.get("/api/profile-live/{ticker}")
+def get_company_profile_live(ticker: str, refresh: bool = False):
+    try:
+        return _lay_profile_cached(ticker_name=ticker.upper(), force_refresh=refresh)
+    except HTTPException:
+        raise
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=str(exc))
+
+
+@app.get("/api/profile/{ticker}")
+def get_company_profile(ticker: str):
+    db = SessionLocal()
+    try:
+        profile = db.query(CompanyProfile).filter(CompanyProfile.ticker == ticker.upper()).first()
+        if not profile:
+            raise HTTPException(status_code=404, detail="Không tìm thấy thông tin doanh nghiệp")
+        
+        return {
+            "ticker": profile.ticker,
+            "company_name": profile.company_name,
+            "industry": profile.industry,
+            "exchange": profile.exchange,
+            "charter_capital": profile.charter_capital,
+            "first_trading_date": profile.first_trading_date,
+            "first_price": profile.first_price,
+            "listed_shares": profile.listed_shares,
+            "outstanding_shares": profile.outstanding_shares,
+            "first_listed_shares": profile.first_listed_shares,
+            "logo_url": profile.logo_url
+        }
+    finally:
+        db.close()
 
 
 

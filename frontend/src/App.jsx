@@ -1,16 +1,52 @@
-import { useEffect, useState, useRef, useMemo } from 'react';
+﻿import { useEffect, useState, useRef, useMemo } from 'react';
 import axios from 'axios';
 import { createChart, CandlestickSeries, HistogramSeries, LineSeries } from 'lightweight-charts';
+import TechnicalDashboardCompact from './components/TechnicalDashboardCompactV2';
+import MarketAnalysisSection from './components/MarketAnalysisSectionV2';
+import TopNavigation from './components/TopNavigation';
+import ChatWidget from './components/ChatWidget';
+import ActionPlanCard from './components/ActionPlanCardV2';
 
 const formatVND = (val) => new Intl.NumberFormat('vi-VN').format(Math.round(Number(val) || 0));
+const formatPercent = (val, digits = 2) => `${Number(val || 0).toLocaleString('vi-VN', { minimumFractionDigits: digits, maximumFractionDigits: digits })}%`;
+const API_BASE_URL = (import.meta.env.VITE_API_BASE_URL || 'http://127.0.0.1:8000').replace(/\/$/, '');
+const buildApiUrl = (path) => `${API_BASE_URL}${path.startsWith('/') ? path : `/${path}`}`;
+const formatCapitalBillions = (val) => Number(val || 0).toLocaleString('vi-VN', {
+  minimumFractionDigits: Number(val || 0) >= 100 ? 0 : 2,
+  maximumFractionDigits: Number(val || 0) >= 100 ? 0 : 2,
+});
+const parseCapitalValueToBillions = (value) => {
+  if (value === null || value === undefined) return null;
+  if (typeof value === 'number') {
+    if (value >= 1_000_000_000) return value / 1_000_000_000;
+    if (value >= 1_000) return value;
+    if (value >= 1) return value / 1000;
+    return value;
+  }
 
-const BANK_PROFILES = {
+  const normalized = String(value).trim().toLowerCase();
+  const numericPart = normalized.replace(/[^0-9,.-]/g, '').replace(/,/g, '');
+  if (!numericPart) return null;
+  const numericValue = Number(numericPart);
+  if (!Number.isFinite(numericValue)) return null;
+
+  if (normalized.includes('tỷ')) return numericValue;
+  if (normalized.includes('triệu')) return numericValue / 1000;
+  if (normalized.includes('đồng') || normalized.includes('vnd')) return numericValue / 1_000_000_000;
+  if (numericValue >= 1_000_000_000) return numericValue / 1_000_000_000;
+  if (numericValue >= 1_000) return numericValue;
+  if (numericValue >= 1) return numericValue / 1000;
+  return numericValue;
+};
+const NEWS_BANK_ALIASES = {
+  ALL: [],
+  VCB: ['vcb', 'vietcombank', 'ngoại thương', 'vietcom bank'],
+  BID: ['bid', 'bidv', 'đầu tư và phát triển'],
+  CTG: ['ctg', 'vietinbank', 'công thương', 'vietin bank'],
+};
+
+const BANK_STATIC_DATA = {
   'VCB': {
-    logo: 'https://cdn.haitrieu.com/wp-content/uploads/2022/02/Logo-Vietcombank.png',
-    name: 'Ngân hàng Thương mại cổ phần Ngoại thương Việt Nam',
-    ma_cp: 'VCB', san_gd: 'HOSE', nhom_nganh: 'Ngân hàng thương mại',
-    ngay_gd_dau: '30/06/2009', gia_dau: '60.0',
-    von_dieu_le: '83,557 tỷ đồng', kl_niem_yet: '8,355,675,094', kl_luu_hanh: '8,355,675,094', kl_lan_dau: '112,285,426',
     tu_van: { name: 'Công ty TNHH Chứng khoán Ngân hàng TMCP Ngoại thương Việt Nam', link: 'https://vcbs.com.vn/' },
     auditors: [
       { year: '2024', name: 'Công ty TNHH Ernst & Young Việt Nam', link: 'https://www.ey.com/en_sg' },
@@ -28,11 +64,6 @@ const BANK_PROFILES = {
     ]
   },
   'BID': {
-    logo: 'https://news.mbbank.com.vn/file-service/uploads/v1/images/c21788de-1a22-48e0-a4ca-7bda44d5b2b4-logo-bidv-20220426071253.jpg?width=947&height=366',
-    name: 'Ngân hàng Thương mại cổ phần Đầu tư và Phát triển Việt Nam',
-    ma_cp: 'BID', san_gd: 'HOSE', nhom_nganh: 'Ngân hàng thương mại',
-    ngay_gd_dau: '24/01/2014', gia_dau: '18.8',
-    von_dieu_le: '68,975 tỷ đồng', kl_niem_yet: '7,021,361,917', kl_luu_hanh: '7,021,361,917', kl_lan_dau: '2,811,202,644',
     tu_van: { name: 'Công ty CP Chứng khoán Ngân hàng Đầu tư và Phát triển Việt Nam', link: 'https://www.bsc.com.vn/' },
     auditors: [
       { year: '2024', name: 'Công ty TNHH KPMG Việt Nam', link: 'https://kpmg.com/xx/en.html' },
@@ -50,11 +81,6 @@ const BANK_PROFILES = {
     ]
   },
   'CTG': {
-    logo: 'https://cdn.haitrieu.com/wp-content/uploads/2022/01/Logo-VietinBank-CTG-Slo.png',
-    name: 'Ngân hàng Thương mại cổ phần Công thương Việt Nam',
-    ma_cp: 'CTG', san_gd: 'HOSE', nhom_nganh: 'Ngân hàng thương mại',
-    ngay_gd_dau: '16/07/2009', gia_dau: '40.1',
-    von_dieu_le: '77,670 tỷ đồng', kl_niem_yet: '7,766,944,637', kl_luu_hanh: '7,766,944,637', kl_lan_dau: '121,211,780',
     tu_van: { name: 'Công ty Cổ phần Chứng khoán SSI', link: 'https://www.ssi.com.vn' },
     auditors: [
       { year: '2024', name: 'Công ty TNHH Deloitte Việt Nam', link: 'https://www.deloitte.com/global/en.html' },
@@ -83,19 +109,45 @@ function App() {
   const [newsData, setNewsData] = useState([]);
   const [loadingNews, setLoadingNews] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
+  const [newsFocusTicker, setNewsFocusTicker] = useState('ALL');
 
   const [filterMonth, setFilterMonth] = useState('All');
   const [filterYear, setFilterYear] = useState('All');
 
-  // --- PHẦN THÊM MỚI 1: STATE CHO CHATBOT ---
+  const [profileData, setProfileData] = useState(null);
+  const [marketContext, setMarketContext] = useState(null);
+  const [loadingContext, setLoadingContext] = useState(false);
+  const [contextError, setContextError] = useState(null);
+
+  // Hook gọi API lấy thông tin profile khi bấm sang tab thông tin cơ bản
+  useEffect(() => {
+    let isMounted = true;
+    if (activeTab === 'info') {
+      setProfileData(null);
+      axios.get(buildApiUrl(`/api/profile-live/${ticker}?refresh=true`))
+        .then(response => {
+          if (isMounted) setProfileData(response.data);
+        })
+        .catch(() => {
+          axios.get(buildApiUrl(`/api/profile/${ticker}`))
+            .then(response => {
+              if (isMounted) setProfileData(response.data);
+            })
+            .catch(err => console.log("Lỗi API hồ sơ doanh nghiệp:", err));
+        });
+    }
+    return () => { isMounted = false; };
+  }, [ticker, activeTab]);
+
+  // State và logic cho chatbot
   const [isChatOpen, setIsChatOpen] = useState(false);
   const [chatInput, setChatInput] = useState('');
   const [chatHistory, setChatHistory] = useState([
-    { role: 'ai', text: 'Chào Minh! Tôi đã nắm được dữ liệu Big4 hôm nay. Bạn cần giải thích gì không?' }
+    { role: 'ai', text: 'Chào Minh! Tôi đã nắm được dữ liệu VCB, BID và CTG hôm nay. Bạn cần giải thích gì không?' }
   ]);
   const [isTyping, setIsTyping] = useState(false);
 
-  // --- HỆ THỐNG KÉO KÍCH THƯỚC GÓC TRÊN TRÁI ---
+  // State và logic thay đổi kích thước chatbot
   const [chatSize, setChatSize] = useState({ width: 360, height: 550 }); // Kích thước mặc định
 
   const startResize = (mouseDownEvent) => {
@@ -106,7 +158,7 @@ function App() {
       const newHeight = window.innerHeight - e.clientY - 105; 
       
       setChatSize({
-        width: Math.max(320, Math.min(newWidth, 800)), // Ép giới hạn: Nhỏ nhất 320px, to nhất 800px
+        width: Math.max(320, Math.min(newWidth, 800)), // Ép giới hạn: nhỏ nhất 320px, lớn nhất 800px
         height: Math.max(400, Math.min(newHeight, window.innerHeight - 100)) // Cao nhất không vượt quá trần
       });
     };
@@ -157,19 +209,23 @@ function App() {
       const currentPrice = data?.current_price || 0;
       const predictPrice = data?.predictions?.[0]?.predicted_price || 0;
       const newsSummary = newsData.slice(0, 3).map(n => n.title).join(". ");
+      const marketContextSummary = marketContext
+        ? `Tâm lý tin tức: ${marketContext.news_sentiment_label}; Xung lực ngân hàng: ${marketContext.banking_sector_label}; Áp lực vĩ mô: ${marketContext.macro_pressure_label}; Rủi ro chính trị: ${marketContext.political_risk_label}; Áp lực tổng thể: ${marketContext.overall_market_label}`
+        : 'Chưa có dữ liệu bối cảnh thị trường.';
 
-      const res = await axios.post('http://127.0.0.1:8000/api/chat', {
+      const res = await axios.post(buildApiUrl('/api/chat'), {
         message: userMsg,
         ticker: ticker,
         current_data: {
           price: formatVND(currentPrice * 1000),
           predict: formatVND(predictPrice * 1000),
-          news_summary: newsSummary
+          news_summary: newsSummary,
+          market_context: marketContextSummary
         }
       });
       setChatHistory(prev => [...prev, { role: 'ai', text: res.data.reply }]);
     } catch {
-      setChatHistory(prev => [...prev, { role: 'ai', text: 'Mất kết nối với bộ não AI...' }]);
+      setChatHistory(prev => [...prev, { role: 'ai', text: 'Mất kết nối với trợ lý AI...' }]);
     } finally {
       setIsTyping(false);
     }
@@ -178,24 +234,46 @@ function App() {
 
   useEffect(() => {
     let isMounted = true;
-    axios.get(`http://127.0.0.1:8000/api/predict/${ticker}`)
+    axios.get(buildApiUrl(`/api/predict/${ticker}`))
       .then(response => { if (isMounted) { setData(response.data); setLoading(false); } })
-      .catch(() => { if (isMounted) { setError("Kết nối Backend thất bại."); setLoading(false); } });
+      .catch(() => { if (isMounted) { setError('Kết nối backend thất bại.'); setLoading(false); } });
     return () => { isMounted = false; };
   }, [ticker]);
 
   useEffect(() => {
     let isMounted = true;
     if (activeTab === 'news' && newsData.length === 0) {
-      axios.get(`http://127.0.0.1:8000/api/news`)
+      axios.get(buildApiUrl('/api/news'))
         .then(response => { if (isMounted) { setNewsData(response.data.news || []); setLoadingNews(false); } })
         .catch(() => { if (isMounted) setLoadingNews(false); });
     }
     return () => { isMounted = false; };
   }, [activeTab, newsData.length]);
 
-  // =========================================================================
-  // Xử lý dữ liệu và lọc trong dữ liệu để hiển thị
+  useEffect(() => {
+    let isMounted = true;
+    if (activeTab !== 'chart') return () => { isMounted = false; };
+
+    setLoadingContext(true);
+    setContextError(null);
+
+    axios.get(buildApiUrl(`/api/context/${ticker}`))
+      .then((response) => {
+        if (!isMounted) return;
+        setMarketContext(response.data);
+        setLoadingContext(false);
+      })
+      .catch(() => {
+        if (!isMounted) return;
+        setMarketContext(null);
+        setContextError('Chưa tải được lớp bối cảnh thị trường.');
+        setLoadingContext(false);
+      });
+
+    return () => { isMounted = false; };
+  }, [ticker, activeTab]);
+
+  // Xử lý dữ liệu và lọc dữ liệu để hiển thị
 
   const { sortedFullData, enrichedFullData, availableYears, availableMonths } = useMemo(() => {
     const safeChartData = Array.isArray(data?.chart_data) ? data.chart_data : [];
@@ -234,7 +312,7 @@ function App() {
     const months = ['01', '02', '03', '04', '05', '06', '07', '08', '09', '10', '11', '12'];
     
     return { sortedFullData: sortedData, enrichedFullData: enrichedData, availableYears: years, availableMonths: months };
-  }, [data]); // Tính toán lại 1 lần duy nhất khi data thay đổi
+  }, [data]); // Tính toán lại một lần duy nhất khi data thay đổi
 
   const displayTableData = useMemo(() => {
     if (!enrichedFullData) return [];
@@ -318,7 +396,7 @@ function App() {
             });
             attentionLineSeries.setData(syncedAttnData);
           }
-        } catch (attnErr) { console.error("Lỗi vẽ XAI:", attnErr); }
+        } catch (attnErr) { console.error("Lá»—i váº½ XAI:", attnErr); }
 
         mainChart.timeScale().subscribeVisibleLogicalRangeChange(timeRange => { if (timeRange !== null) attnChart.timeScale().setVisibleLogicalRange(timeRange); });
         attnChart.timeScale().subscribeVisibleLogicalRangeChange(timeRange => { if (timeRange !== null) mainChart.timeScale().setVisibleLogicalRange(timeRange); });
@@ -356,7 +434,7 @@ function App() {
 
             let html = '';
             if (volData) html += `<div style="margin-bottom: 5px;"><span style="color: #848e9c">Khối lượng: </span> <span style="color: #eaecef; font-weight: bold;">${formatVND(volData.value)}</span></div>`;
-            if (attnData && attnData.value !== undefined) html += `<div><span style="color: #848e9c">Trọng số AI: </span> <span style="color: #e3fe1a; font-weight: bold;">${attnData.value.toFixed(2)}%</span></div>`;
+            if (attnData && attnData.value !== undefined) html += `<div><span style="color: #848e9c">Tín hiệu phân tích: </span> <span style="color: #e3fe1a; font-weight: bold;">${attnData.value.toFixed(2)}%</span></div>`;
 
             if (html) {
               attnTooltipRef.current.style.display = 'flex'; 
@@ -390,11 +468,119 @@ function App() {
   }, [data, activeTab]); 
 
   const filteredNews = useMemo(() => {
-    return newsData.filter(article => 
-      article.title.toLowerCase().includes(searchQuery.toLowerCase()) || 
-      (article.description && article.description.toLowerCase().includes(searchQuery.toLowerCase()))
-    );
+    const normalizedQuery = searchQuery.trim().toLowerCase();
+    const tokenGroups = normalizedQuery
+      ? normalizedQuery
+        .split(/\s+/)
+        .filter(Boolean)
+        .map((token) => {
+          const expanded = new Set([token]);
+          Object.entries(NEWS_BANK_ALIASES).forEach(([bankCode, aliases]) => {
+            const keywordPool = [bankCode.toLowerCase(), ...aliases];
+            if (keywordPool.some((keyword) => token.includes(keyword) || keyword.includes(token))) {
+              keywordPool.forEach((keyword) => expanded.add(keyword));
+            }
+          });
+          return [...expanded];
+        })
+      : [];
+
+    return newsData.filter((article) => {
+      const haystack = `${article.title || ''} ${article.description || ''}`.toLowerCase();
+      const matchQuery = !tokenGroups.length || tokenGroups.every((group) => group.some((keyword) => haystack.includes(keyword)));
+      return matchQuery;
+    });
   }, [newsData, searchQuery]);
+
+  const newsInsights = useMemo(() => {
+    const focusKeywords = newsFocusTicker === 'ALL'
+      ? []
+      : (NEWS_BANK_ALIASES[newsFocusTicker] || []);
+    const focusLabel = newsFocusTicker === 'ALL' ? 'Toàn ngành' : newsFocusTicker;
+    const normalizeText = (value) =>
+      String(value || '')
+        .replace(/<[^>]+>/g, ' ')
+        .replace(/\s+/g, ' ')
+        .trim();
+    const scoreToRelevance = (score) => {
+      if (score >= 90) return { label: 'Rất cao', tone: 'high' };
+      if (score >= 55) return { label: 'Cao', tone: 'medium' };
+      if (score >= 30) return { label: 'Theo dõi', tone: 'base' };
+      return { label: 'Nền ngành', tone: 'base' };
+    };
+
+    const enrichedArticles = filteredNews.map((article) => {
+      const cleanDescription = normalizeText(article.description);
+      const haystack = `${article.title} ${cleanDescription}`.toLowerCase();
+      const tickerMatches = focusKeywords.filter((keyword) => haystack.includes(keyword));
+      const isTickerFocused = tickerMatches.length > 0;
+      const isBankingRelated = Object.values(NEWS_BANK_ALIASES)
+        .flat()
+        .some((keyword) => haystack.includes(keyword));
+      const titleLower = String(article.title || '').toLowerCase();
+      const queryTokens = searchQuery.trim().toLowerCase().split(/\s+/).filter(Boolean);
+      const queryMatchCount = queryTokens.filter((token) => haystack.includes(token)).length;
+      const titleMatchBoost = isTickerFocused
+        ? tickerMatches.filter((keyword) => titleLower.includes(keyword)).length
+        : 0;
+      const relevanceScore =
+        (isTickerFocused ? 72 : 0)
+        + (tickerMatches.length * 10)
+        + (queryMatchCount * 8)
+        + (titleMatchBoost * 6)
+        + (isBankingRelated ? 18 : 0);
+      const relevance = scoreToRelevance(relevanceScore);
+      return {
+        ...article,
+        cleanDescription,
+        isTickerFocused,
+        isBankingRelated,
+        relevanceScore,
+        relevanceLabel: relevance.label,
+        relevanceTone: relevance.tone,
+        relevanceSummary: isTickerFocused
+          ? `Ưu tiên theo ${focusLabel}`
+          : isBankingRelated
+            ? 'Tin cùng nhóm ngân hàng'
+            : 'Tin nền của thị trường',
+      };
+    });
+
+    const rankedArticles = [...enrichedArticles].sort((a, b) => {
+      if (b.relevanceScore !== a.relevanceScore) {
+        return b.relevanceScore - a.relevanceScore;
+      }
+      return (b.timestamp || 0) - (a.timestamp || 0);
+    });
+
+    const tickerFocusedArticles = newsFocusTicker === 'ALL'
+      ? rankedArticles
+      : rankedArticles.filter((article) => article.isTickerFocused);
+    const sourceCounts = rankedArticles.reduce((accumulator, article) => {
+      const sourceName = article.source || 'Khác';
+      accumulator[sourceName] = (accumulator[sourceName] || 0) + 1;
+      return accumulator;
+    }, {});
+
+    const sourceChips = Object.entries(sourceCounts)
+      .sort((a, b) => b[1] - a[1])
+      .slice(0, 4)
+      .map(([sourceName, count]) => ({ sourceName, count }));
+
+    const featuredArticle = tickerFocusedArticles[0] || rankedArticles[0] || null;
+    const secondaryArticles = rankedArticles.filter((article) => article !== featuredArticle);
+
+    return {
+      enrichedArticles: rankedArticles,
+      featuredArticle,
+      secondaryArticles,
+      sourceChips,
+      tickerFocusedCount: tickerFocusedArticles.length,
+      priorityArticlesCount: rankedArticles.filter((article) => article.relevanceScore >= 55).length,
+      uniqueSourcesCount: Object.keys(sourceCounts).length,
+      latestPublished: enrichedArticles[0]?.published || 'Đang cập nhật',
+    };
+  }, [filteredNews, newsFocusTicker, searchQuery]);
 
   const cssStyles = `
     ::-webkit-scrollbar { width: 6px; height: 6px; }
@@ -413,16 +599,36 @@ function App() {
     .btn:hover { background: #2b3139; color: #eaecef; }
     .btn.active { background: #fcd535; color: #1e2329; border-color: #fcd535; }
     
-    .main-grid { display: grid; grid-template-columns: minmax(0, 2.4fr) minmax(0, 1fr); gap: 20px; padding: 0 20px; flex: 1; margin-bottom: 20px; }
+    .main-grid { display: grid; grid-template-columns: minmax(0, 1.72fr) minmax(340px, 0.88fr); gap: 20px; padding: 0 20px 20px; flex: 1; margin-bottom: 8px; align-items: start; }
+    @media (max-width: 1280px) { .main-grid { grid-template-columns: minmax(0, 1.5fr) minmax(320px, 0.95fr); } }
     @media (max-width: 1100px) { .main-grid { grid-template-columns: 1fr; } } 
     
-    .chart-section { min-width: 0; display: flex; flex-direction: column; } 
-    .chart-section h2 { margin-top: 0; color: #eaecef; font-size: 18px; }
-    
-    .panel-section { min-width: 0; display: flex; flex-direction: column; gap: 15px; }
-    .card { background: #1e2329; border-radius: 8px; border: 1px solid #2b3139; }
+    .chart-section { min-width: 0; display: grid; gap: 16px; align-content: start; } 
+    .chart-card, .signal-card { padding: 18px; }
+    .chart-card-header, .signal-card-header { display: flex; justify-content: space-between; align-items: flex-start; gap: 12px; flex-wrap: wrap; margin-bottom: 14px; }
+    .chart-eyebrow { color: #848e9c; font-size: 11px; letter-spacing: 1px; text-transform: uppercase; }
+    .chart-title { margin: 6px 0 0; color: #eaecef; font-size: 22px; font-weight: 700; letter-spacing: 0.2px; }
+    .chart-subtitle { color: #94a3b8; font-size: 13px; line-height: 1.5; max-width: 420px; }
+    .chart-status-row { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; justify-content: flex-end; }
+    .status-pill { display: inline-flex; align-items: center; gap: 6px; padding: 7px 12px; border-radius: 999px; background: #161a1e; border: 1px solid #2b3139; color: #eaecef; font-size: 12px; font-weight: 600; }
+    .status-pill.muted { color: #94a3b8; font-weight: 500; }
+    .chart-frame { position: relative; width: 100%; background: #161a1e; border: 1px solid #2b3139; border-radius: 12px; padding: 12px; }
+    .legend-row { display: flex; gap: 12px; flex-wrap: wrap; justify-content: flex-end; }
+    .legend-chip { font-size: 11px; font-weight: 600; }
+    .quick-diagnosis-grid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 10px; }
+    .quick-diagnosis-card { background: #161a1e; border: 1px solid #2b3139; border-radius: 12px; padding: 12px; min-height: 94px; display: flex; flex-direction: column; justify-content: space-between; }
+    .quick-diagnosis-label { color: #848e9c; font-size: 12px; }
+    .quick-diagnosis-value { color: #eaecef; font-size: 18px; font-weight: 700; line-height: 1.35; }
+    .quick-diagnosis-sub { color: #94a3b8; font-size: 12px; line-height: 1.5; }
+    .panel-section { min-width: 0; display: flex; flex-direction: column; gap: 16px; align-self: start; }
+    .detail-stack { display: grid; gap: 16px; padding: 0 20px 24px; }
+    .detail-grid { display: grid; grid-template-columns: minmax(0, 1.2fr) minmax(0, 0.8fr); gap: 16px; align-items: start; }
+    .detail-card { min-width: 0; }
+    .card { background: #1e2329; border-radius: 14px; border: 1px solid #2b3139; box-shadow: 0 14px 32px rgba(0,0,0,0.18); }
     .card h3 { color: #848e9c; font-size: 13px; margin: 0 0 10px 0; letter-spacing: 0.5px; }
     .price { font-size: 24px; font-weight: bold; color: #eaecef; }
+    @media (max-width: 980px) { .detail-grid { grid-template-columns: 1fr; } .quick-diagnosis-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+    @media (max-width: 768px) { .chart-card, .signal-card { padding: 14px; } .chart-frame { padding: 8px; } .chart-title { font-size: 20px; } .detail-stack { padding: 0 20px 20px; } .quick-diagnosis-grid { grid-template-columns: 1fr; } }
 
     .text-green { color: #0ecb81 !important; } 
     .text-red { color: #f6465d !important; } 
@@ -443,54 +649,132 @@ function App() {
     .nav-tab:hover { color: #eaecef; }
     .nav-tab.active { color: #fcd535; border-bottom: 2px solid #fcd535; }
     
-    .news-header { display: flex; justify-content: space-between; align-items: center; padding: 0 20px; margin-bottom: 20px; }
-    .search-input { background: #1e2329; border: 1px solid #2b3139; color: #eaecef; padding: 10px 15px; border-radius: 6px; width: 300px; outline: none; transition: border 0.2s; }
+    .news-shell { padding: 0 20px 50px 20px; display: flex; flex-direction: column; gap: 18px; }
+    .news-hero { background: linear-gradient(135deg, rgba(24, 30, 37, 0.98) 0%, rgba(18, 23, 28, 0.98) 100%); border: 1px solid rgba(58, 67, 79, 0.92); border-radius: 18px; padding: 22px; box-shadow: 0 18px 40px rgba(0, 0, 0, 0.22); display: flex; justify-content: space-between; gap: 20px; flex-wrap: wrap; }
+    .news-hero-main { display: flex; flex-direction: column; gap: 12px; max-width: 760px; }
+    .news-kicker { color: #fcd535; font-size: 12px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.9px; }
+    .news-hero-title { margin: 0; color: #f3f5f7; font-size: 28px; line-height: 1.3; }
+    .news-hero-subtitle { margin: 0; color: #92a2b3; font-size: 14px; line-height: 1.7; max-width: 760px; }
+    .news-pill-row { display: flex; gap: 10px; flex-wrap: wrap; }
+    .news-pill { display: inline-flex; align-items: center; justify-content: center; padding: 7px 12px; border-radius: 999px; border: 1px solid rgba(58, 67, 79, 0.92); background: rgba(31, 38, 45, 0.88); color: #d3d9df; font-size: 12px; font-weight: 600; }
+    .news-pill.active { color: #fcd535; border-color: rgba(252, 213, 53, 0.25); background: rgba(252, 213, 53, 0.10); }
+    .news-focus-row { display: flex; gap: 10px; flex-wrap: wrap; margin-top: 6px; }
+    .news-focus-chip { display: inline-flex; align-items: center; justify-content: center; padding: 8px 14px; border-radius: 999px; border: 1px solid rgba(58, 67, 79, 0.92); background: rgba(24, 30, 37, 0.9); color: #cbd5e1; font-size: 12px; font-weight: 700; cursor: pointer; transition: all 0.2s; }
+    .news-focus-chip:hover { border-color: rgba(252, 213, 53, 0.25); color: #f3f5f7; }
+    .news-focus-chip.active { color: #fcd535; border-color: rgba(252, 213, 53, 0.3); background: rgba(252, 213, 53, 0.10); }
+    .news-search-note { color: #7f91a5; font-size: 12px; line-height: 1.55; }
+    .news-hero-side { display: flex; flex-direction: column; gap: 12px; min-width: 280px; flex: 1; align-items: stretch; }
+    .news-header { display: flex; justify-content: space-between; align-items: center; gap: 16px; }
+    .search-input { background: #1e2329; border: 1px solid #2b3139; color: #eaecef; padding: 11px 15px; border-radius: 10px; width: 320px; max-width: 100%; outline: none; transition: border 0.2s, box-shadow 0.2s; }
     .search-input:focus { border-color: #fcd535; }
+    .news-stats-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; }
+    .news-stat-card { background: linear-gradient(180deg, rgba(22, 27, 33, 0.98), rgba(18, 23, 28, 0.98)); border: 1px solid rgba(58, 67, 79, 0.92); border-radius: 14px; padding: 15px; min-height: 92px; display: flex; flex-direction: column; justify-content: space-between; }
+    .news-stat-label { color: #8fa0b2; font-size: 12px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.7px; }
+    .news-stat-value { color: #f3f5f7; font-size: 22px; font-weight: 700; line-height: 1.35; }
+    .news-stat-sub { color: #6f8093; font-size: 12px; line-height: 1.5; }
+    .news-featured-card { background: linear-gradient(135deg, rgba(24, 30, 37, 0.98) 0%, rgba(18, 23, 28, 0.98) 100%); border: 1px solid rgba(58, 67, 79, 0.92); border-radius: 18px; padding: 22px; display: grid; grid-template-columns: minmax(0, 1.5fr) minmax(260px, 0.9fr); gap: 20px; box-shadow: 0 18px 36px rgba(0, 0, 0, 0.22); }
+    .news-featured-left { display: flex; flex-direction: column; gap: 14px; }
+    .news-featured-right { display: flex; flex-direction: column; gap: 12px; }
+    .news-featured-image { width: 100%; min-height: 220px; border-radius: 16px; object-fit: cover; border: 1px solid rgba(58, 67, 79, 0.92); background: linear-gradient(135deg, rgba(41, 98, 255, 0.10), rgba(252, 213, 53, 0.08)); }
+    .news-featured-image.placeholder { display: flex; align-items: center; justify-content: center; color: #fcd535; font-size: 13px; font-weight: 700; letter-spacing: 0.3px; }
+    .news-featured-title { margin: 0; color: #f3f5f7; font-size: 24px; line-height: 1.45; }
+    .news-featured-desc { margin: 0; color: #9eb0c3; font-size: 14px; line-height: 1.75; }
+    .news-source-row { display: flex; gap: 10px; flex-wrap: wrap; align-items: center; }
+    .news-source-badge { display: inline-flex; align-items: center; justify-content: center; padding: 7px 12px; border-radius: 999px; background: rgba(41, 98, 255, 0.12); border: 1px solid rgba(41, 98, 255, 0.28); color: #a8c7ff; font-size: 12px; font-weight: 700; }
+    .news-time-badge { display: inline-flex; align-items: center; justify-content: center; padding: 7px 12px; border-radius: 999px; background: rgba(252, 213, 53, 0.08); border: 1px solid rgba(252, 213, 53, 0.18); color: #f4d861; font-size: 12px; font-weight: 600; }
+    .news-cta { display: inline-flex; align-items: center; justify-content: center; align-self: flex-start; padding: 10px 15px; border-radius: 999px; background: linear-gradient(135deg, rgba(41, 98, 255, 0.22), rgba(41, 98, 255, 0.1)); border: 1px solid rgba(41, 98, 255, 0.35); color: #cfe0ff; text-decoration: none; font-size: 13px; font-weight: 700; transition: transform 0.2s, border-color 0.2s; }
+    .news-cta:hover { transform: translateY(-1px); border-color: rgba(252, 213, 53, 0.3); color: #fcd535; }
+    .news-chip-grid { display: flex; flex-wrap: wrap; gap: 10px; }
+    .news-source-chip { display: inline-flex; align-items: center; justify-content: space-between; gap: 10px; min-width: 120px; padding: 10px 12px; border-radius: 12px; background: rgba(29, 35, 41, 0.95); border: 1px solid rgba(58, 67, 79, 0.92); color: #d9e0e8; font-size: 13px; font-weight: 600; }
+    .news-source-count { color: #fcd535; font-weight: 700; }
     
-    .news-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(300px, 1fr)); gap: 20px; padding: 0 20px; }
-    .news-card { background: #1e2329; border-radius: 8px; overflow: hidden; border: 1px solid #2b3139; transition: transform 0.2s; display: flex; flexDirection: column; }
-    .news-card:hover { transform: translateY(-5px); border-color: #fcd535; }
-    .news-card a { text-decoration: none; color: inherit; display: block; padding: 15px; }
-    .news-card h3 { color: #eaecef; font-size: 16px; margin: 0 0 10px 0; line-height: 1.4; }
-    .news-meta { display: flex; justify-content: space-between; color: #848e9c; font-size: 12px; margin-bottom: 10px; }
-    .news-source { color: #fcd535; font-weight: bold; }
-    .news-card .desc { color: #848e9c; font-size: 13px; line-height: 1.5; }
+    .news-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(320px, 1fr)); gap: 18px; }
+    .news-card { background: linear-gradient(180deg, rgba(22, 27, 33, 0.98), rgba(18, 23, 28, 0.98)); border-radius: 16px; overflow: hidden; border: 1px solid rgba(58, 67, 79, 0.92); transition: transform 0.2s, border-color 0.2s, box-shadow 0.2s; display: flex; min-height: 250px; }
+    .news-card:hover { transform: translateY(-4px); border-color: rgba(252, 213, 53, 0.28); box-shadow: 0 18px 36px rgba(0, 0, 0, 0.18); }
+    .news-card a { text-decoration: none; color: inherit; display: flex; flex: 1; padding: 18px; flex-direction: column; gap: 12px; }
+    .news-card-image { width: 100%; height: 170px; border-radius: 12px; object-fit: cover; border: 1px solid rgba(58, 67, 79, 0.92); background: linear-gradient(135deg, rgba(41, 98, 255, 0.10), rgba(252, 213, 53, 0.08)); }
+    .news-card-image.placeholder { display: flex; align-items: center; justify-content: center; color: #fcd535; font-size: 12px; font-weight: 700; letter-spacing: 0.2px; }
+    .news-card h3 { color: #f3f5f7; font-size: 18px; margin: 0; line-height: 1.55; }
+    .news-meta { display: flex; justify-content: space-between; gap: 10px; color: #8fa0b2; font-size: 12px; flex-wrap: wrap; }
+    .news-source { color: #fcd535; font-weight: 700; letter-spacing: 0.2px; }
+    .news-card .desc { color: #9aaaba; font-size: 13px; line-height: 1.75; display: -webkit-box; -webkit-line-clamp: 4; -webkit-box-orient: vertical; overflow: hidden; }
+    .news-card-footer { display: flex; justify-content: space-between; align-items: center; gap: 10px; margin-top: auto; }
+    .news-tag { display: inline-flex; align-items: center; justify-content: center; padding: 6px 10px; border-radius: 999px; background: rgba(14, 203, 129, 0.10); border: 1px solid rgba(14, 203, 129, 0.25); color: #7ce4b5; font-size: 12px; font-weight: 700; }
+    .news-tag.macro { background: rgba(252, 213, 53, 0.10); border-color: rgba(252, 213, 53, 0.22); color: #f4d861; }
+    .news-tag.neutral { background: rgba(148, 163, 184, 0.10); border-color: rgba(148, 163, 184, 0.18); color: #c4ced8; }
+    .news-relevance-badge { display: inline-flex; align-items: center; justify-content: center; padding: 6px 10px; border-radius: 999px; font-size: 12px; font-weight: 700; border: 1px solid rgba(252, 213, 53, 0.18); background: rgba(252, 213, 53, 0.08); color: #f4d861; }
+    .news-relevance-badge.high { border-color: rgba(14, 203, 129, 0.25); background: rgba(14, 203, 129, 0.10); color: #78e4b5; }
+    .news-relevance-badge.medium { border-color: rgba(252, 213, 53, 0.22); background: rgba(252, 213, 53, 0.10); color: #f4d861; }
+    .news-relevance-badge.base { border-color: rgba(148, 163, 184, 0.18); background: rgba(148, 163, 184, 0.10); color: #c4ced8; }
+    .news-card-insight { color: #8293a8; font-size: 12px; line-height: 1.55; }
     .news-card img { max-width: 100%; border-radius: 4px; margin-bottom: 10px; }
+    @media (max-width: 1100px) { .news-featured-card { grid-template-columns: 1fr; } .news-stats-grid { grid-template-columns: 1fr; } }
+    @media (max-width: 720px) { .news-shell { padding: 0 16px 50px 16px; } .news-hero { padding: 18px; } .news-hero-title { font-size: 22px; } .news-header { flex-direction: column; align-items: stretch; } .search-input { width: 100%; } }
 
-    .company-profile { background: #1e2329; border-radius: 8px; padding: 20px; margin: 0 20px; color: #eaecef; border: 1px solid #2b3139; }
-    .cp-header { display: flex; align-items: center; gap: 20px; margin-bottom: 20px; border-bottom: 1px solid #2b3139; padding-bottom: 15px; flex-wrap: wrap; }
-    .cp-logo-container { width: 120px; height: 120px; background: white; border-radius: 8px; display: flex; justify-content: center; align-items: center; overflow: hidden; padding: 10px; flex-shrink: 0; }
+    .company-profile { background: linear-gradient(180deg, rgba(24, 29, 35, 0.98) 0%, rgba(19, 23, 28, 0.98) 100%); border-radius: 18px; padding: 24px; margin: 0 20px; color: #eaecef; border: 1px solid rgba(62, 72, 84, 0.95); box-shadow: 0 18px 40px rgba(0, 0, 0, 0.28); }
+    .cp-header { display: flex; justify-content: space-between; align-items: flex-start; gap: 24px; margin-bottom: 18px; padding-bottom: 18px; border-bottom: 1px solid rgba(58, 66, 76, 0.9); flex-wrap: wrap; }
+    .cp-header-main { display: flex; align-items: center; gap: 18px; min-width: 0; }
+    .cp-header-side { display: flex; flex-direction: column; gap: 10px; align-items: flex-end; min-width: 240px; }
+    .cp-badge-row { display: flex; gap: 10px; flex-wrap: wrap; justify-content: flex-end; }
+    .cp-badge { display: inline-flex; align-items: center; justify-content: center; gap: 6px; padding: 7px 12px; border-radius: 999px; font-size: 12px; font-weight: 600; border: 1px solid rgba(91, 107, 124, 0.8); background: rgba(31, 38, 45, 0.85); color: #d4d9df; }
+    .cp-badge.live { color: #0ecb81; border-color: rgba(14, 203, 129, 0.35); background: rgba(14, 203, 129, 0.08); }
+    .cp-badge.fallback { color: #fcd535; border-color: rgba(252, 213, 53, 0.28); background: rgba(252, 213, 53, 0.10); }
+    .cp-link-chip { display: inline-flex; align-items: center; justify-content: center; gap: 6px; padding: 9px 14px; border-radius: 999px; background: linear-gradient(135deg, rgba(41, 98, 255, 0.22), rgba(41, 98, 255, 0.1)); border: 1px solid rgba(41, 98, 255, 0.35); color: #a8c7ff; font-size: 12px; font-weight: 600; text-decoration: none; transition: transform 0.2s, border-color 0.2s; }
+    .cp-link-chip:hover { transform: translateY(-1px); border-color: rgba(252, 213, 53, 0.35); color: #fcd535; }
+    .cp-logo-container { width: 124px; height: 124px; background: linear-gradient(180deg, #ffffff 0%, #eef2f6 100%); border-radius: 16px; display: flex; justify-content: center; align-items: center; overflow: hidden; padding: 12px; flex-shrink: 0; box-shadow: inset 0 0 0 1px rgba(19, 23, 28, 0.08); }
     .cp-logo { max-width: 100%; max-height: 100%; object-fit: contain; }
-    .cp-title-group h2 { color: #f6465d; font-size: 24px; margin: 0 0 5px 0; }
-    .cp-title-group p { color: #848e9c; margin: 0; font-size: 14px; }
-    
-    .cp-body { display: grid; grid-template-columns: minmax(0, 2fr) minmax(0, 1fr); gap: 30px; }
-    @media (max-width: 900px) { .cp-body { grid-template-columns: 1fr; } .cp-left { border-right: none !important; padding-right: 0 !important; border-bottom: 1px solid #2b3139; padding-bottom: 20px; } }
-    
-    .cp-left { border-right: 1px solid #2b3139; padding-right: 30px; }
-    .cp-stats-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(250px, 1fr)); column-gap: 50px; row-gap: 15px; margin-bottom: 30px; }
-    .stat-item { display: flex; justify-content: space-between; border-bottom: 1px dashed #2b3139; padding-bottom: 5px; }
-    .stat-label { color: #848e9c; font-weight: bold; font-size: 14px; }
-    .stat-value { font-weight: bold; text-align: right; font-size: 14px; }
+    .cp-title-group { min-width: 0; }
+    .cp-title-group h2 { color: #f3f5f7; font-size: 28px; margin: 0 0 6px 0; line-height: 1.3; }
+    .cp-title-group p { color: #92a2b3; margin: 0; font-size: 14px; line-height: 1.6; }
+    .cp-highlight-grid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 14px; margin-bottom: 18px; }
+    .cp-highlight-card { background: linear-gradient(180deg, rgba(22, 27, 33, 0.98), rgba(18, 23, 28, 0.98)); border: 1px solid rgba(58, 67, 79, 0.92); border-radius: 14px; padding: 16px; min-height: 92px; display: flex; flex-direction: column; justify-content: space-between; }
+    .cp-highlight-label { color: #8fa0b2; font-size: 12px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.7px; }
+    .cp-highlight-value { color: #f3f5f7; font-size: 18px; font-weight: 700; line-height: 1.4; }
+    .cp-highlight-sub { color: #6f8093; font-size: 12px; line-height: 1.5; }
+    .cp-note-banner { margin-bottom: 18px; padding: 14px 16px; border-radius: 14px; border: 1px solid rgba(252, 213, 53, 0.25); background: linear-gradient(135deg, rgba(252, 213, 53, 0.10), rgba(252, 213, 53, 0.04)); color: #f4d861; font-size: 13px; line-height: 1.65; }
+    .cp-body { display: grid; grid-template-columns: minmax(0, 1.45fr) minmax(360px, 1.05fr); gap: 20px; align-items: start; }
+    @media (max-width: 1100px) { .cp-highlight-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); } .cp-body { grid-template-columns: 1fr; } .cp-header-side { align-items: flex-start; min-width: 0; } .cp-badge-row { justify-content: flex-start; } }
+    @media (max-width: 720px) { .cp-highlight-grid { grid-template-columns: 1fr; } .cp-header-main { align-items: flex-start; } .cp-logo-container { width: 96px; height: 96px; } .cp-title-group h2 { font-size: 22px; } }
+    .cp-left, .cp-right { display: flex; flex-direction: column; gap: 18px; align-self: start; }
+    .cp-primary-card { background: linear-gradient(180deg, rgba(23, 28, 34, 0.98), rgba(18, 23, 28, 0.98)); border: 1px solid rgba(58, 67, 79, 0.92); border-radius: 16px; padding: 18px; }
+    .cp-panel-title { margin: 0 0 16px 0; color: #f3f5f7; font-size: 16px; font-weight: 700; letter-spacing: 0.2px; }
+    .cp-stats-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); column-gap: 26px; row-gap: 14px; }
+    .stat-item { display: flex; justify-content: space-between; gap: 12px; border-bottom: 1px dashed rgba(68, 78, 90, 0.85); padding-bottom: 8px; min-height: 46px; }
+    .stat-label { color: #8fa0b2; font-weight: 600; font-size: 13px; line-height: 1.5; }
+    .stat-value { font-weight: 700; text-align: right; font-size: 14px; line-height: 1.5; color: #f3f5f7; }
     .val-blue { color: #2962ff; }
     
-    .cp-chart-container { margin-top: 20px; overflow-x: auto; padding-bottom: 10px; }
-    .cp-chart-title { text-align: center; font-weight: bold; margin-bottom: 20px; font-size: 16px; }
-    .cp-bar-chart { display: flex; align-items: flex-end; justify-content: space-around; height: 150px; border-bottom: 1px solid #848e9c; border-left: 1px solid #848e9c; padding-bottom: 5px; margin-left: 40px; position: relative; min-width: 500px; }
+    .cp-chart-container { overflow-x: auto; padding-bottom: 8px; }
+    .cp-chart-title { text-align: left; font-weight: 700; margin-bottom: 18px; font-size: 16px; color: #f3f5f7; }
+    .cp-bar-chart { display: flex; align-items: flex-end; justify-content: space-around; height: 180px; border-bottom: 1px solid rgba(132, 142, 156, 0.45); border-left: 1px solid rgba(132, 142, 156, 0.45); padding-bottom: 8px; margin-left: 40px; position: relative; min-width: 500px; }
     .cp-bar { width: 30px; background-color: #0b4a7b; transition: all 0.3s; position: relative; cursor: pointer; border-radius: 2px 2px 0 0; }
     .cp-bar:hover { background-color: #fcd535; }
     .bar-tooltip { position: absolute; bottom: 100%; left: 50%; transform: translateX(-50%); background: rgba(30, 35, 41, 0.95); border: 1px solid #2b3139; color: #eaecef; padding: 8px 12px; border-radius: 6px; font-size: 13px; white-space: nowrap; opacity: 0; pointer-events: none; transition: all 0.2s ease-in-out; margin-bottom: 5px; z-index: 10; box-shadow: 0 4px 6px rgba(0,0,0,0.3); }
     .cp-bar:hover .bar-tooltip { opacity: 1; bottom: calc(100% + 5px); }
     .cp-y-axis { position: absolute; left: -40px; height: 100%; display: flex; flex-direction: column; justify-content: space-between; font-size: 10px; color: #848e9c; text-align: right; width: 30px; }
     .cp-x-axis { display: flex; justify-content: space-around; margin-top: 5px; font-size: 11px; color: #848e9c; margin-left: 40px; min-width: 500px; }
+    .cp-chart-caption { margin: 12px 0 0 40px; color: #8fa0b2; font-size: 12px; line-height: 1.6; }
     
-    .cp-right h4 { margin-top: 0; color: #848e9c; font-size: 14px; margin-bottom: 15px; text-transform: uppercase; letter-spacing: 0.5px; }
+    .cp-right h4 { margin-top: 0; color: #9aaaba; font-size: 13px; margin-bottom: 14px; text-transform: uppercase; letter-spacing: 0.8px; }
     .audit-list { display: flex; flex-direction: column; gap: 10px; }
-    .audit-item { display: flex; justify-content: space-between; padding: 12px 15px; background: #161a1e; border-radius: 6px; border: 1px solid #2b3139; align-items: center; transition: border-color 0.2s; }
+    .audit-item { display: flex; justify-content: space-between; gap: 12px; padding: 12px 15px; background: rgba(29, 35, 41, 0.96); border-radius: 10px; border: 1px solid rgba(58, 67, 79, 0.92); align-items: center; transition: border-color 0.2s, transform 0.2s; }
     .audit-item:hover { border-color: #fcd535; }
-    .audit-year { font-weight: bold; color: #eaecef; width: 50px; font-size: 14px; }
-    a.audit-name { color: #2962ff; font-weight: 500; font-size: 13px; text-align: right; text-decoration: none; transition: color 0.2s; }
+    .audit-year { font-weight: 700; color: #eaecef; width: 58px; font-size: 13px; flex-shrink: 0; }
+    a.audit-name, .audit-name { color: #cfd8e3; font-weight: 500; font-size: 13px; text-align: right; text-decoration: none; transition: color 0.2s; line-height: 1.6; }
     a.audit-name:hover { color: #fcd535; text-decoration: underline; }
+    .cp-secondary-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 18px; margin-top: 24px; }
+    .profile-section-card { background: linear-gradient(180deg, rgba(22, 27, 33, 0.98), rgba(18, 23, 28, 0.98)); border: 1px solid rgba(58, 67, 79, 0.92); border-radius: 16px; padding: 18px; box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.02); }
+    .profile-section-card h4 { margin: 0 0 12px 0; color: #f3f5f7; font-size: 15px; letter-spacing: 0.2px; }
+    .profile-section-description { color: #9fb0c3; line-height: 1.7; font-size: 14px; margin: 0; }
+    .profile-rich-list { display: flex; flex-direction: column; gap: 10px; }
+    .profile-rich-item { display: flex; justify-content: space-between; gap: 12px; padding: 12px 14px; border-radius: 10px; background: #1d2329; border: 1px solid rgba(60, 72, 88, 0.85); }
+    .profile-rich-main { display: flex; flex-direction: column; gap: 5px; min-width: 0; }
+    .profile-rich-name { color: #f3f5f7; font-size: 14px; font-weight: 600; line-height: 1.4; }
+    .profile-rich-subtitle { color: #8f9fb2; font-size: 12px; line-height: 1.5; }
+    .profile-rich-meta { display: flex; flex-direction: column; gap: 6px; align-items: flex-end; text-align: right; }
+    .profile-chip { display: inline-flex; align-items: center; justify-content: center; min-width: 64px; padding: 5px 9px; border-radius: 999px; background: rgba(252, 213, 53, 0.12); border: 1px solid rgba(252, 213, 53, 0.25); color: #fcd535; font-size: 12px; font-weight: 600; }
+    .profile-empty { color: #7f8c9d; font-size: 13px; line-height: 1.6; margin: 0; }
+    @media (max-width: 1100px) { .cp-secondary-grid { grid-template-columns: 1fr; } }
 
     @keyframes spin { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }
     .loader-spinner { border: 4px solid rgba(252, 213, 53, 0.2); border-top: 4px solid #fcd535; border-radius: 50%; width: 50px; height: 50px; animation: spin 1s linear infinite; }
@@ -525,97 +809,302 @@ function App() {
   const currentPrice = data?.current_price || 0;
   const predictedPrice = data?.predictions?.[0]?.predicted_price || 0;
   const priceDiff = predictedPrice - currentPrice;
-  let recommendation = "GIỮ CỔ PHIẾU";
+  let recommendation = 'GIỮ CỔ PHIẾU';
   let recColor = "#fcd535"; 
+  
   // Để biên độ là 0.8% để hệ thống nhạy bén hơn với các biến động nhỏ
   if (priceDiff > currentPrice * 0.008) { 
-      recommendation = "MUA VÀO"; 
+      recommendation = 'MUA VÀO'; 
       recColor = "#0ecb81"; 
   } 
   else if (priceDiff < -currentPrice * 0.008) { 
-      recommendation = "BÁN RA"; 
+      recommendation = 'BÁN RA'; 
       recColor = "#f6465d"; 
   }
 
-  const profile = BANK_PROFILES[ticker];
+  const priceDiffPercent = currentPrice ? (priceDiff / currentPrice) * 100 : 0;
+  const thresholdValue = data?.recommendation_threshold ?? 0.008;
+  const fallbackRecommendation =
+    priceDiff > currentPrice * thresholdValue
+      ? 'MUA VÀO'
+      : priceDiff < -currentPrice * thresholdValue
+        ? 'BÁN RA'
+        : 'GIỮ CỔ PHIẾU';
+
+  recommendation = data?.recommendation || fallbackRecommendation;
+  recColor = recommendation === 'MUA VÀO'
+    ? '#0ecb81'
+    : recommendation === 'BÁN RA'
+      ? '#f6465d'
+      : '#fcd535';
+
+  const recommendationNote = data?.recommendation_note || 'Khuyến nghị được tổng hợp từ tín hiệu giá và lớp bối cảnh thị trường.';
+
+  const getPositiveScoreColor = (score) => {
+    if (score >= 65) return '#0ecb81';
+    if (score <= 35) return '#f6465d';
+    return '#fcd535';
+  };
+
+  const getRiskScoreColor = (score) => {
+    if (score >= 65) return '#f6465d';
+    if (score <= 35) return '#0ecb81';
+    return '#fcd535';
+  };
+
+  const getConfidenceColor = (score) => {
+    if (score >= 75) return '#0ecb81';
+    if (score >= 55) return '#fcd535';
+    return '#f6465d';
+  };
+
+  const marketPressureScore = marketContext?.overall_market_pressure ?? 50;
+  const bankingSupportScore = marketContext?.banking_sector_score ?? 50;
+  const moveRatio = currentPrice ? Math.abs(priceDiff) / (currentPrice * Math.max(thresholdValue, 0.0001)) : 0;
+  const priceSignalScore = Number(
+    data?.price_signal_score
+      ?? Math.max(25, Math.min(95, 35 + moveRatio * 22))
+  );
+  const contextAlignmentScore = Number(
+    data?.context_alignment_score
+      ?? Math.max(
+        20,
+        Math.min(
+          95,
+          100 - Math.abs((marketPressureScore - (recommendation === 'MUA VÀO' ? 30 : recommendation === 'BÁN RA' ? 70 : 50))) + ((bankingSupportScore - 50) * (recommendation === 'MUA VÀO' ? 0.25 : recommendation === 'BÁN RA' ? -0.25 : 0))
+        )
+      )
+  );
+  const recommendationConfidenceScore = Number(
+    data?.recommendation_confidence_score
+      ?? Math.max(20, Math.min(95, (priceSignalScore * 0.55) + (contextAlignmentScore * 0.45)))
+  );
+  const recommendationConfidenceLabel = data?.recommendation_confidence_label
+    || (recommendationConfidenceScore >= 75 ? 'Cao' : recommendationConfidenceScore >= 55 ? 'Trung bình' : 'Thận trọng');
+  const recommendationConfidenceNote = data?.recommendation_confidence_note
+    || (recommendation === 'MUA VÀO'
+      ? 'Tín hiệu giá đang nghiêng theo chiều tăng, nhưng nên theo dõi thêm bối cảnh vĩ mô và chính trị.'
+      : recommendation === 'BÁN RA'
+        ? 'Tín hiệu giá đang suy yếu, phù hợp ưu tiên kiểm soát rủi ro khi bối cảnh không thuận lợi.'
+        : 'Tín hiệu giá chưa tạo khác biệt đủ lớn, phù hợp quan sát thêm trước khi hành động.');
+
+  const latestDataTime = data?.latest_data_time || 'Chưa xác định';
+  const analysisSignalLabel = data?.analysis_signal_label || 'Tín hiệu hỗ trợ phân tích';
+  const riskLevelLabel = marketPressureScore >= 70 ? 'Rủi ro cao' : marketPressureScore >= 55 ? 'Rủi ro trung bình' : 'Rủi ro thấp';
+
+  const buildActionPlan = () => {
+    const bandSize = Math.max(thresholdValue / 2, 0.004);
+    const moveMagnitude = Math.abs(priceDiffPercent);
+    const defaultReason = 'Lớp bối cảnh đang ở trạng thái trung tính, cần theo dõi thêm dữ liệu mới nhất.';
+
+    const marketReason = (() => {
+      if (!marketContext) return defaultReason;
+
+      if (recommendation === 'MUA VÀO') {
+        if ((marketContext.banking_sector_score ?? 50) >= 60) {
+          return `Xung lực ngành ngân hàng đang ${String(marketContext.banking_sector_label || '').toLowerCase()}, hỗ trợ cho kịch bản tăng ngắn hạn.`;
+        }
+        if ((marketContext.news_sentiment_score ?? 50) >= 60) {
+          return `Tâm lý tin tức đang ${String(marketContext.news_sentiment_label || '').toLowerCase()}, giúp dòng tiền dễ phản ứng tích cực hơn.`;
+        }
+        return `Áp lực tổng thể hiện ở mức ${String(marketContext.overall_market_label || '').toLowerCase()}, phù hợp giải ngân từng phần thay vì mua dồn.`;
+      }
+
+      if (recommendation === 'BÁN RA') {
+        if ((marketContext.overall_market_pressure ?? 50) >= 65) {
+          return `Áp lực tổng thể đang ${String(marketContext.overall_market_label || '').toLowerCase()}, nên ưu tiên giảm rủi ro ngắn hạn.`;
+        }
+        if ((marketContext.political_risk_score ?? 50) >= 60) {
+          return `Rủi ro chính trị đang ${String(marketContext.political_risk_label || '').toLowerCase()}, có thể làm tín hiệu hồi phục kém bền.`;
+        }
+        return `Áp lực vĩ mô đang ${String(marketContext.macro_pressure_label || '').toLowerCase()}, phù hợp hạ tỷ trọng thay vì giữ vị thế lớn.`;
+      }
+
+      if (moveMagnitude < thresholdValue * 100) {
+        return 'Biên dự báo chưa vượt ngưỡng quyết định, nên tiếp tục quan sát thay vì hành động mạnh.';
+      }
+      return `Bối cảnh hiện ở mức ${String(marketContext.overall_market_label || '').toLowerCase()}, phù hợp giữ vị thế linh hoạt và chờ thêm xác nhận.`;
+    })();
+
+    const confidenceReason = `Độ tự tin hiện đạt ${Math.round(recommendationConfidenceScore)}%, phù hợp chiến lược ${recommendationConfidenceLabel.toLowerCase()}.`;
+
+    if (recommendation === 'MUA VÀO') {
+      const entryLow = currentPrice * (1 - bandSize);
+      const entryHigh = currentPrice * (1 + (bandSize * 0.6));
+      const targetPrice = Math.max(predictedPrice, currentPrice * (1 + Math.max(thresholdValue, 0.01)));
+      const stopLoss = currentPrice * (1 - Math.max(thresholdValue * 0.75, 0.006));
+
+      return {
+        actionTitle: recommendationConfidenceScore >= 75 ? 'MUA TÍCH LŨY' : 'MUA THĂM DÒ',
+        actionSubtitle: 'Ưu tiên giải ngân từng phần khi tín hiệu giá còn duy trì trên ngưỡng quyết định.',
+        suggestedWeight: recommendationConfidenceScore >= 75 ? '40% - 50% vốn kế hoạch' : recommendationConfidenceScore >= 55 ? '25% - 35% vốn kế hoạch' : '10% - 20% vốn kế hoạch',
+        actionRange: `${formatVND(entryLow * 1000)} - ${formatVND(entryHigh * 1000)} VNĐ`,
+        targetLabel: `${formatVND(targetPrice * 1000)} VNĐ`,
+        guardrailLabel: `${formatVND(stopLoss * 1000)} VNĐ`,
+        horizonLabel: recommendationConfidenceScore >= 75 ? '1 - 3 phiên' : '1 - 2 phiên',
+        riskLabel: riskLevelLabel,
+        reasons: [
+          `Giá dự báo T+1 đang cao hơn thị giá ${formatPercent(moveMagnitude, 2)}.`,
+          marketReason,
+          confidenceReason
+        ]
+      };
+    }
+
+    if (recommendation === 'BÁN RA') {
+      const actionLow = currentPrice * (1 - (bandSize * 0.5));
+      const actionHigh = currentPrice * (1 + (bandSize * 0.5));
+      const targetPrice = Math.min(predictedPrice, currentPrice * (1 - Math.max(thresholdValue, 0.01)));
+      const invalidationPrice = currentPrice * (1 + Math.max(thresholdValue * 0.65, 0.006));
+
+      return {
+        actionTitle: recommendationConfidenceScore >= 75 ? 'GIẢM TỶ TRỌNG' : 'BÁN QUẢN TRỊ RỦI RO',
+        actionSubtitle: 'Ưu tiên giảm vị thế ở các nhịp hồi ngắn thay vì chờ tín hiệu đảo chiều rõ hơn.',
+        suggestedWeight: recommendationConfidenceScore >= 75 ? 'Giảm 40% - 60% vị thế' : 'Giảm 20% - 35% vị thế',
+        actionRange: `${formatVND(actionLow * 1000)} - ${formatVND(actionHigh * 1000)} VNĐ`,
+        targetLabel: `${formatVND(targetPrice * 1000)} VNĐ`,
+        guardrailLabel: `${formatVND(invalidationPrice * 1000)} VNĐ`,
+        horizonLabel: recommendationConfidenceScore >= 75 ? 'Trong phiên kế tiếp' : '1 - 2 phiên',
+        riskLabel: riskLevelLabel,
+        reasons: [
+          `Giá dự báo T+1 đang thấp hơn thị giá ${formatPercent(moveMagnitude, 2)}.`,
+          marketReason,
+          confidenceReason
+        ]
+      };
+    }
+
+    const actionLow = currentPrice * (1 - bandSize);
+    const actionHigh = currentPrice * (1 + bandSize);
+    const reviewLevel = currentPrice * (1 + Math.sign(priceDiff || 1) * Math.max(thresholdValue * 0.5, 0.004));
+
+    return {
+      actionTitle: marketPressureScore >= 60 ? 'GIỮ THẬN TRỌNG' : 'GIỮ QUAN SÁT',
+      actionSubtitle: 'Biên lợi thế chưa đủ rộng để mở vị thế mới, nên theo dõi thêm xác nhận trước khi hành động.',
+      suggestedWeight: 'Giữ tỷ trọng hiện tại, hạn chế mua đuổi',
+      actionRange: `${formatVND(actionLow * 1000)} - ${formatVND(actionHigh * 1000)} VNĐ`,
+      targetLabel: `${formatVND(predictedPrice * 1000)} VNĐ`,
+      guardrailLabel: `${formatVND(reviewLevel * 1000)} VNĐ`,
+      horizonLabel: 'Theo dõi thêm 1 - 3 phiên',
+      riskLabel: riskLevelLabel,
+      reasons: [
+        `Biên dự báo hiện chỉ ở mức ${formatPercent(moveMagnitude, 2)}, chưa tạo khác biệt đủ mạnh.`,
+        marketReason,
+        confidenceReason
+      ]
+    };
+  };
+
+  const actionPlan = buildActionPlan();
+  const profileFallback = BANK_STATIC_DATA[ticker];
+  const charterCapitalHistoryRaw = profileData?.charter_capital_history?.length
+    ? profileData.charter_capital_history
+    : profileFallback.chartData;
+  const normalizedCharterCapitalHistory = charterCapitalHistoryRaw
+    .map((item, index) => {
+      const numericValue = parseCapitalValueToBillions(item.numeric_value ?? item.value);
+      return {
+        quarter: item.quarter || `Mốc ${index + 1}`,
+        numericValue,
+      };
+    })
+    .filter((item) => Number.isFinite(item.numericValue) && item.numericValue > 0);
+  const maxCapitalValue = normalizedCharterCapitalHistory.length
+    ? Math.max(...normalizedCharterCapitalHistory.map((item) => item.numericValue))
+    : 1;
+  const charterCapitalHistory = normalizedCharterCapitalHistory.map((item) => ({
+    ...item,
+    height: Math.max(18, Math.round((item.numericValue / maxCapitalValue) * 90)),
+    value: formatCapitalBillions(item.numericValue),
+  }));
+  const capitalAxisTicks = [1, 0.75, 0.5, 0.25, 0].map((ratio) => formatCapitalBillions(maxCapitalValue * ratio));
+  const listingAdvisor = profileData?.listing_advisor?.name
+    ? profileData.listing_advisor
+    : profileFallback.tu_van;
+  const auditorTimeline = profileData?.auditor_timeline?.length
+    ? profileData.auditor_timeline
+    : profileFallback.auditors;
+  const displayCharterCapital = (() => {
+    const normalizedValue = parseCapitalValueToBillions(profileData?.charter_capital);
+    if (normalizedValue !== null) {
+      return `${formatCapitalBillions(normalizedValue)} tỷ đồng`;
+    }
+    return profileData?.charter_capital || 'Đang cập nhật';
+  })();
+  const profileStatusClass = profileData?.profile_status === 'live' ? 'live' : 'fallback';
+  const profileStatusLabel = profileData?.profile_status === 'live' ? 'Đồng bộ trực tuyến' : 'Dữ liệu dự phòng';
+  const profileHighlights = [
+    { label: 'Mã giao dịch', value: profileData?.ticker || ticker, sub: 'Nhóm ngân hàng theo dõi' },
+    { label: 'Sàn niêm yết', value: profileData?.exchange || 'HOSE', sub: profileData?.industry || 'Ngân hàng' },
+    { label: 'Vốn điều lệ', value: displayCharterCapital, sub: 'Quy mô vốn hiện tại' },
+    { label: 'Ngày giao dịch đầu tiên', value: profileData?.first_trading_date || 'Đang cập nhật', sub: 'Mốc niêm yết lịch sử' },
+  ];
+  const latestMarketRow = sortedFullData[sortedFullData.length - 1];
+  const recentVolumeSlice = sortedFullData.slice(-20);
+  const averageRecentVolume = recentVolumeSlice.length
+    ? recentVolumeSlice.reduce((sum, item) => sum + (Number(item.volume) || 0), 0) / recentVolumeSlice.length
+    : 0;
+  const volumeRatio = averageRecentVolume > 0 && latestMarketRow?.volume
+    ? latestMarketRow.volume / averageRecentVolume
+    : 1;
+  const latestRsi = Number(latestMarketRow?.rsi_14 || 50);
+  const rsiLabel = latestRsi >= 70 ? 'Quá mua' : latestRsi <= 30 ? 'Quá bán' : 'Trung tính';
+  const trendLabel = priceDiffPercent >= thresholdValue * 100
+    ? 'Tăng ngắn hạn'
+    : priceDiffPercent <= -(thresholdValue * 100)
+      ? 'Giảm ngắn hạn'
+      : 'Đi ngang';
+  const volumeLabel = volumeRatio >= 1.15 ? 'Cao hơn trung bình' : volumeRatio <= 0.85 ? 'Thấp hơn trung bình' : 'Cân bằng';
+  const quickDiagnosisCards = [
+    {
+      label: 'Xu hướng ngắn hạn',
+      value: trendLabel,
+      sub: `Biên dự báo ${priceDiffPercent >= 0 ? '+' : ''}${formatPercent(priceDiffPercent, 2)}`,
+      color: priceDiffPercent >= thresholdValue * 100 ? '#0ecb81' : priceDiffPercent <= -(thresholdValue * 100) ? '#f6465d' : '#fcd535',
+    },
+    {
+      label: 'RSI hiện tại',
+      value: `${latestRsi.toFixed(1)} • ${rsiLabel}`,
+      sub: 'Theo dõi trạng thái quá mua/quá bán',
+      color: latestRsi >= 70 ? '#f6465d' : latestRsi <= 30 ? '#0ecb81' : '#eaecef',
+    },
+    {
+      label: 'Khối lượng',
+      value: volumeLabel,
+      sub: `So với trung bình 20 phiên: ${volumeRatio.toFixed(2)}x`,
+      color: volumeRatio >= 1.15 ? '#0ecb81' : volumeRatio <= 0.85 ? '#fcd535' : '#eaecef',
+    },
+    {
+      label: 'Bối cảnh chung',
+      value: marketContext?.overall_market_label || 'Đang đồng bộ',
+      sub: marketContext ? `Rủi ro chính trị: ${marketContext.political_risk_label}` : 'Chờ đồng bộ lớp bối cảnh',
+      color: marketContext ? getRiskScoreColor(marketContext.overall_market_pressure) : '#eaecef',
+    },
+  ];
 
   return (
     <div className="app-container">
       <style>{cssStyles}</style>
-      
-      {/* Giao diện chatbot AI */}
-      <div className="chat-widget">
-        {isChatOpen && (
-          <div className="chat-window" style={{ width: `${chatSize.width}px`, height: `${chatSize.height}px` }}>
-            
-            {/* Mở rộng kích thước boxchat */}
-            <div 
-              onMouseDown={startResize}
-              style={{
-                position: 'absolute', top: 0, left: 0, 
-                width: '40px', height: '40px', 
-                cursor: 'nwse-resize', zIndex: 9999
-              }}
-              title="Kéo để đổi kích thước"
-            />
-            {/* Icon kéo */}
-            <div style={{ position: 'absolute', top: '8px', left: '10px', pointerEvents: 'none', color: '#fcd535', fontSize: '18px', zIndex: 10000, fontWeight: 'bold'}}>
-              ↖
-            </div>
 
-            <div className="chat-header">
-               <span style={{marginLeft: '25px'}}>TRỢ LÝ AI</span>
-               <button onClick={() => setIsChatOpen(false)} style={{background:'none', border:'none', color:'#848e9c', cursor:'pointer', fontSize: '20px'}}>×</button>
-            </div>
-            <div className="chat-messages">
-              {chatHistory.map((m, i) => (
-                <div key={i} className={`msg ${m.role}`}>{m.text}</div>
-              ))}
-              {isTyping && <div style={{fontSize:11, color:'#848e9c'}}>AI đang phân tích...</div>}
-              <div ref={chatEndRef} />
-            </div>
-            <div className="chat-input-area">
-              <input 
-                type="text" 
-                placeholder="Hỏi AI..." 
-                value={chatInput} 
-                onChange={e => setChatInput(e.target.value)} 
-                onKeyDown={e => e.key === 'Enter' && handleSendMessage()} 
-              />
-              <button className="send-btn" onClick={handleSendMessage}>GỬI</button>
-            </div>
-          </div>
-        )}
-        <button className="chat-bubble" onClick={() => setIsChatOpen(!isChatOpen)}>
-          <span style={{fontSize:24}}>{isChatOpen ? '↓' : '💬'}</span>
-        </button>
-      </div>
+      <ChatWidget
+        isChatOpen={isChatOpen}
+        setIsChatOpen={setIsChatOpen}
+        chatSize={chatSize}
+        startResize={startResize}
+        chatHistory={chatHistory}
+        isTyping={isTyping}
+        chatEndRef={chatEndRef}
+        chatInput={chatInput}
+        setChatInput={setChatInput}
+        handleSendMessage={handleSendMessage}
+      />
 
-      <div className="header">
-        <h1>HỆ THỐNG AI HỖ TRỢ NGƯỜI DÙNG DỰ ĐOÁN CỔ PHIẾU <span>| Kỹ thuật: CNN-LSTM-Attention</span></h1>
-      </div>
-      
-      <div className="nav-tabs">
-        <div className={`nav-tab ${activeTab === 'chart' ? 'active' : ''}`} onClick={() => handleTabChange('chart')}>
-          BIỂU ĐỒ KỸ THUẬT
-        </div>
-        <div className={`nav-tab ${activeTab === 'info' ? 'active' : ''}`} onClick={() => handleTabChange('info')}>
-          THÔNG TIN CƠ BẢN
-        </div>
-        <div className={`nav-tab ${activeTab === 'news' ? 'active' : ''}`} onClick={() => handleTabChange('news')}>
-          TIN TỨC THỊ TRƯỜNG
-        </div>
-      </div>
-
-      {(activeTab === 'chart' || activeTab === 'info') && (
-        <div className="btn-group">
-          {['VCB', 'BID', 'CTG'].map(bank => (
-            <button key={bank} className={`btn ${ticker === bank ? 'active' : ''}`} onClick={() => handleBankChange(bank)}>
-              {bank}
-            </button>
-          ))}
-        </div>
-      )}
+      <TopNavigation
+        activeTab={activeTab}
+        handleTabChange={handleTabChange}
+        ticker={ticker}
+        handleBankChange={handleBankChange}
+      />
 
       {activeTab === 'chart' && (
         <div style={{ position: 'relative' }}>
@@ -634,203 +1123,509 @@ function App() {
 
           <div className="main-grid" style={{ pointerEvents: loading ? 'none' : 'auto', opacity: loading ? 0.5 : 1 }}>
             <div className="chart-section">
-              <h2 style={{ marginBottom: '15px' }}>{ticker} / VNĐ</h2>
-              <div style={{ position: 'relative', width: '100%', marginBottom: '15px' }}>
-                <div ref={tooltipRef} style={{ position: 'absolute', top: '15px', left: '15px', zIndex: 10, backgroundColor: 'rgba(30, 35, 41, 0.85)', padding: '10px', borderRadius: '6px', border: '1px solid #2b3139', fontSize: '13px', display: 'none', gap: '15px', pointerEvents: 'none' }}></div>
-                <div ref={chartContainerRef} style={{ width: '100%' }}></div>
-              </div>
-              
-              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '0 10px', marginBottom: '5px' }}>
-                 <h4 style={{ color: '#848e9c', margin: 0, fontSize: '13px', letterSpacing: '1px' }}>KHỐI LƯỢNG GIAO DỊCH & ATTENTION HEATMAP</h4>
-                 <div style={{ display: 'flex', gap: '15px' }}>
-                   <span style={{ fontSize: '11px', color: '#0ecb81' }}>■ Vol Tăng</span>
-                   <span style={{ fontSize: '11px', color: '#f6465d' }}>■ Vol Giảm</span>
-                   <span style={{ fontSize: '11px', color: '#e3fe1a', fontWeight: 'bold' }}>— Line Đỏ (AI Attention)</span>
-                 </div>
-              </div>
-
-              <div style={{ position: 'relative', width: '100%', borderTop: '1px solid #2b3139', paddingTop: '10px' }}>
-                 <div ref={attnTooltipRef} style={{ position: 'absolute', top: '15px', left: '15px', zIndex: 10, backgroundColor: 'rgba(30, 35, 41, 0.85)', padding: '8px 12px', borderRadius: '6px', border: '1px solid #2b3139', fontSize: '13px', display: 'none', gap: '10px', pointerEvents: 'none' }}></div>
-                <div ref={attentionContainerRef} style={{ width: '100%' }}></div>
-              </div>
-            </div>
-
-            <div className="panel-section">
-              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '15px' }}>
-                <div className="card" style={{ padding: '15px' }}>
-                  <h3>THỊ GIÁ HIỆN TẠI</h3>
-                  <div className="price">{formatVND(currentPrice * 1000)}</div>
-                </div>
-                <div className="card" style={{ padding: '15px' }}>
-                  <h3>DỰ BÁO T+1</h3>
-                  <div className="price" style={{ color: '#eaecef' }}>{formatVND(predictedPrice * 1000)}</div>
-                </div>
-              </div>
-
-              <div className="card" style={{ padding: '10px 20px', border: `1px solid ${recColor}` }}>
-                <h3 style={{ marginBottom: '5px' }}>HỆ THỐNG KHUYẾN NGHỊ</h3>
-                <div style={{ fontSize: '24px', fontWeight: 'bold', color: recColor, letterSpacing: '2px' }}>{recommendation}</div>
-              </div>
-
-              <div className="card order-book" style={{ padding: '15px' }}>
-                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', borderBottom: '1px solid #2b3139', paddingBottom: '10px' }}>
-                  <h3 style={{ margin: 0 }}>LỊCH SỬ THỊ TRƯỜNG</h3>
-                  <div style={{ display: 'flex', gap: '8px' }}>
-                    <select className="filter-select" value={filterMonth} onChange={(e) => setFilterMonth(e.target.value)}>
-                      <option value="All">Tất cả tháng</option>
-                      {availableMonths.map(m => <option key={m} value={m}>Tháng {m}</option>)}
-                    </select>
-                    <select className="filter-select" value={filterYear} onChange={(e) => setFilterYear(e.target.value)}>
-                      <option value="All">Tất cả năm</option>
-                      {availableYears.map(y => <option key={y} value={y}>Năm {y}</option>)}
-                    </select>
+              <div className="card chart-card">
+                <div className="chart-card-header">
+                  <div>
+                    <div className="chart-eyebrow">Trung tâm phân tích giá</div>
+                    <h2 className="chart-title">{ticker} / VNĐ</h2>
+                    <div className="chart-subtitle">Biểu đồ nến là khu vực theo dõi chính, tập trung vào biến động giá và ngưỡng ra quyết định trong ngắn hạn.</div>
+                  </div>
+                  <div className="chart-status-row">
+                    <span className="status-pill">Tín hiệu trọng tâm T+1</span>
+                    <span className="status-pill muted">{latestDataTime}</span>
                   </div>
                 </div>
 
-                <div className="order-book-scroll" style={{ maxHeight: '350px' }}>
-                  {displayTableData.length === 0 ? (
-                    <div style={{ textAlign: 'center', padding: '20px', color: '#848e9c' }}>Không có dữ liệu giao dịch trong thời gian này.</div>
-                  ) : (
-                    <table>
-                      <thead>
-                        <tr><th>Ngày</th><th>Mở</th><th>Cao</th><th>Thấp</th><th>Đóng</th><th>Vol (K)</th><th>RSI</th></tr>
-                      </thead>
-                      <tbody>
-                        {displayTableData.slice(0, 100).map((row, i) => {
-                          const dateParts = row.time.split('-');
-                          const displayDate = `${dateParts[2]}/${dateParts[1]}/${dateParts[0]}`;
-                          return (
-                            <tr key={i}>
-                              <td style={{ color: '#848e9c' }}>{displayDate}</td>
-                              <td>{formatVND(row.open)}</td>
-                              <td>{formatVND(row.high)}</td>
-                              <td>{formatVND(row.low)}</td>
-                              <td className={row.colorClass} style={{ fontWeight: 'bold' }}>{formatVND(row.close)}</td>
-                              <td>{formatVND(row.volume / 1000)}</td>
-                              <td style={{ color: (row.rsi_14 > 70) ? '#f6465d' : (row.rsi_14 < 30) ? '#0ecb81' : '#eaecef' }}>{Number(row.rsi_14).toFixed(1)}</td>
-                            </tr>
-                          )
-                        })}
-                      </tbody>
-                    </table>
-                  )}
+                <div className="chart-frame">
+                  <div ref={tooltipRef} style={{ position: 'absolute', top: '15px', left: '15px', zIndex: 10, backgroundColor: 'rgba(30, 35, 41, 0.85)', padding: '10px', borderRadius: '6px', border: '1px solid #2b3139', fontSize: '13px', display: 'none', gap: '15px', pointerEvents: 'none' }}></div>
+                  <div ref={chartContainerRef} style={{ width: '100%' }}></div>
                 </div>
               </div>
-            </div>
-          </div>
-        </div>
-      )}
 
-      {activeTab === 'info' && (
-        <div className="company-profile">
-          <div className="cp-header">
-            <div className="cp-logo-container">
-              <img src={profile.logo} alt={ticker} className="cp-logo" />
-            </div>
-            <div className="cp-title-group">
-              <h2>{profile.name}</h2>
-              <p>Cổ phiếu được giao dịch ký quỹ theo Thông báo của HSX ↗</p>
-            </div>
-          </div>
-
-          <div className="cp-body">
-            <div className="cp-left">
-              <div className="cp-stats-grid">
-                <div className="stat-item"><span className="stat-label">Mã cổ phiếu</span><span className="stat-value val-blue">{profile.ma_cp}</span></div>
-                <div className="stat-item"><span className="stat-label">Vốn điều lệ</span><span className="stat-value">{profile.von_dieu_le}</span></div>
-                
-                <div className="stat-item"><span className="stat-label">Sàn giao dịch</span><span className="stat-value val-blue">{profile.san_gd}</span></div>
-                <div className="stat-item"><span className="stat-label">KL CP đang niêm yết</span><span className="stat-value">{profile.kl_niem_yet}</span></div>
-                
-                <div className="stat-item"><span className="stat-label">Nhóm ngành</span><span className="stat-value val-blue">{profile.nhom_nganh}</span></div>
-                <div className="stat-item" style={{alignItems: 'center'}}><span className="stat-label">KL CP đang lưu hành</span>
-                  <div style={{textAlign: 'right'}}><span className="stat-value">{profile.kl_luu_hanh}</span><br/><span style={{fontSize: '11px', color: '#848e9c'}}>(100%)</span></div>
+              <div className="card signal-card">
+                <div className="signal-card-header">
+                  <div>
+                    <div className="chart-eyebrow">Bộ lọc dòng tiền</div>
+                    <h3 style={{ margin: '6px 0 0', color: '#eaecef', fontSize: '18px' }}>Khối lượng giao dịch & tín hiệu hỗ trợ</h3>
+                  </div>
+                  <div className="legend-row">
+                    <span className="legend-chip" style={{ color: '#0ecb81' }}>■ Vol tăng</span>
+                    <span className="legend-chip" style={{ color: '#f6465d' }}>■ Vol giảm</span>
+                    <span className="legend-chip" style={{ color: '#e3fe1a' }}>— Đường tín hiệu</span>
+                  </div>
                 </div>
-                
-                <div className="stat-item"><span className="stat-label">Ngày giao dịch đầu tiên</span><span className="stat-value">{profile.ngay_gd_dau}</span></div>
-                <div className="stat-item"><span className="stat-label">KL cổ phiếu niêm yết lần đầu</span><span className="stat-value">{profile.kl_lan_dau}</span></div>
-                
-                <div className="stat-item"><span className="stat-label">Giá đóng cửa phiên GD đầu tiên</span><span className="stat-value">{profile.gia_dau}</span></div>
+
+                <div className="chart-frame">
+                  <div ref={attnTooltipRef} style={{ position: 'absolute', top: '15px', left: '15px', zIndex: 10, backgroundColor: 'rgba(30, 35, 41, 0.85)', padding: '8px 12px', borderRadius: '6px', border: '1px solid #2b3139', fontSize: '13px', display: 'none', gap: '10px', pointerEvents: 'none' }}></div>
+                  <div ref={attentionContainerRef} style={{ width: '100%' }}></div>
+                </div>
               </div>
 
-              <div className="cp-chart-container">
-                <div className="cp-chart-title">Biểu đồ biến đổi vốn điều lệ</div>
-                <div className="cp-bar-chart">
-                  <div className="cp-y-axis"><span>100k</span><span>75k</span><span>50k</span><span>25k</span><span>0</span></div>
-                  {profile.chartData.map((item, idx) => (
-                    <div key={idx} className="cp-bar" style={{ height: `${item.height}%` }}>
-                      <div className="bar-tooltip">
-                        <strong style={{ color: '#fcd535' }}>{item.quarter}</strong><br/>
-                        {item.value} tỷ VNĐ
-                      </div>
+              <div className="card signal-card">
+                <div className="signal-card-header">
+                  <div>
+                    <div className="chart-eyebrow">Chẩn đoán nhanh</div>
+                    <h3 style={{ margin: '6px 0 0', color: '#eaecef', fontSize: '18px' }}>Bảng đọc nhanh cho quyết định trong ngày</h3>
+                  </div>
+                  <span className="status-pill muted">Tóm tắt để đọc nhanh trước khi hành động</span>
+                </div>
+
+                <div className="quick-diagnosis-grid">
+                  {quickDiagnosisCards.map((item) => (
+                    <div key={item.label} className="quick-diagnosis-card">
+                      <div className="quick-diagnosis-label">{item.label}</div>
+                      <div className="quick-diagnosis-value" style={{ color: item.color }}>{item.value}</div>
+                      <div className="quick-diagnosis-sub">{item.sub}</div>
                     </div>
                   ))}
                 </div>
-                <div className="cp-x-axis">
-                  {profile.chartData.map((item, idx) => (
-                    <span key={idx}>{item.quarter}</span>
-                  ))}
+              </div>
+            </div>
+
+            <TechnicalDashboardCompact
+              latestDataTime={latestDataTime}
+              currentPrice={currentPrice}
+              predictedPrice={predictedPrice}
+              priceDiff={priceDiff}
+              priceDiffPercent={priceDiffPercent}
+              thresholdValue={thresholdValue}
+              formatVND={formatVND}
+              formatPercent={formatPercent}
+              recColor={recColor}
+              recommendation={recommendation}
+              recommendationNote={recommendationNote}
+              recommendationConfidenceScore={recommendationConfidenceScore}
+              recommendationConfidenceLabel={recommendationConfidenceLabel}
+              recommendationConfidenceNote={recommendationConfidenceNote}
+              actionPlan={actionPlan}
+              priceSignalScore={priceSignalScore}
+              contextAlignmentScore={contextAlignmentScore}
+              getPositiveScoreColor={getPositiveScoreColor}
+              getConfidenceColor={getConfidenceColor}
+            />
+          </div>
+
+          <div style={{ padding: '0 20px 18px' }}>
+            <ActionPlanCard
+              recColor={recColor}
+              actionPlan={actionPlan}
+            />
+          </div>
+
+          <MarketAnalysisSection
+            loadingContext={loadingContext}
+            contextError={contextError}
+            marketContext={marketContext}
+            analysisSignalLabel={analysisSignalLabel}
+            getPositiveScoreColor={getPositiveScoreColor}
+            getRiskScoreColor={getRiskScoreColor}
+            displayTableData={displayTableData}
+            filterMonth={filterMonth}
+            setFilterMonth={setFilterMonth}
+            filterYear={filterYear}
+            setFilterYear={setFilterYear}
+            availableMonths={availableMonths}
+            availableYears={availableYears}
+            formatVND={formatVND}
+          />
+        </div>
+      )}
+
+      {activeTab === 'info' && !profileData && (
+        <div className="company-profile" style={{ textAlign: 'center', color: '#9fb0c3' }}>
+          Đang đồng bộ hồ sơ doanh nghiệp...
+        </div>
+      )}
+
+      {activeTab === 'info' && profileData && (
+        <div className="company-profile">
+          <div className="cp-header">
+            <div className="cp-header-main">
+              <div className="cp-logo-container">
+                <img src={profileData.logo_url} alt={ticker} className="cp-logo" />
+              </div>
+              <div className="cp-title-group">
+                <h2>{profileData.company_name}</h2>
+                <p>
+                  {profileData.profile_source
+                    ? `Nguồn hồ sơ: ${profileData.profile_source} • Cập nhật: ${profileData.profile_updated_at}`
+                    : 'Hồ sơ doanh nghiệp đang được đồng bộ tự động.'}
+                </p>
+              </div>
+            </div>
+            <div className="cp-header-side">
+              <div className="cp-badge-row">
+                <span className={`cp-badge ${profileStatusClass}`}>{profileStatusLabel}</span>
+                {profileData.profile_source && (
+                  <span className="cp-badge">{profileData.profile_source}</span>
+                )}
+              </div>
+              {profileData.website && (
+                <a href={profileData.website} target="_blank" rel="noopener noreferrer" className="cp-link-chip">
+                  Website chính thức ↗
+                </a>
+              )}
+            </div>
+          </div>
+
+          <div className="cp-highlight-grid">
+            {profileHighlights.map((item) => (
+              <div key={item.label} className="cp-highlight-card">
+                <span className="cp-highlight-label">{item.label}</span>
+                <span className="cp-highlight-value">{item.value}</span>
+                <span className="cp-highlight-sub">{item.sub}</span>
+              </div>
+            ))}
+          </div>
+
+          {profileData.crawl_note && (
+            <div className="cp-note-banner">
+              {profileData.crawl_note}
+            </div>
+          )}
+
+          <div className="cp-body">
+            <div className="cp-left">
+              <div className="cp-primary-card">
+                <h4 className="cp-panel-title">Thông tin niêm yết cốt lõi</h4>
+                <div className="cp-stats-grid">
+                  <div className="stat-item"><span className="stat-label">Mã cổ phiếu</span><span className="stat-value val-blue">{profileData.ticker}</span></div>
+                  <div className="stat-item"><span className="stat-label">Vốn điều lệ</span><span className="stat-value">{displayCharterCapital}</span></div>
+                  
+                  <div className="stat-item"><span className="stat-label">Sàn giao dịch</span><span className="stat-value val-blue">{profileData.exchange}</span></div>
+                  <div className="stat-item"><span className="stat-label">KL CP đang niêm yết</span><span className="stat-value">{profileData.listed_shares}</span></div>
+                  
+                  <div className="stat-item"><span className="stat-label">Nhóm ngành</span><span className="stat-value val-blue">{profileData.industry}</span></div>
+                  <div className="stat-item" style={{alignItems: 'center'}}><span className="stat-label">KL CP đang lưu hành</span>
+                    <div style={{textAlign: 'right'}}><span className="stat-value">{profileData.outstanding_shares}</span><br/><span style={{fontSize: '11px', color: '#848e9c'}}>(100%)</span></div>
+                  </div>
+                  
+                  <div className="stat-item"><span className="stat-label">Ngày giao dịch đầu tiên</span><span className="stat-value">{profileData.first_trading_date}</span></div>
+                  <div className="stat-item"><span className="stat-label">KL cổ phiếu niêm yết lần đầu</span><span className="stat-value">{profileData.first_listed_shares}</span></div>
+                  
+                  <div className="stat-item"><span className="stat-label">Giá đóng cửa phiên GD đầu tiên</span><span className="stat-value">{profileData.first_price}</span></div>
+                </div>
+              </div>
+
+              <div className="cp-primary-card">
+                <div className="cp-chart-container">
+                  <div className="cp-chart-title">Biểu đồ biến đổi vốn điều lệ</div>
+                  <div className="cp-bar-chart">
+                    <div className="cp-y-axis">
+                      {capitalAxisTicks.map((tick, index) => (
+                        <span key={`${tick}-${index}`}>{tick}</span>
+                      ))}
+                    </div>
+                    {charterCapitalHistory.map((item, idx) => (
+                      <div key={idx} className="cp-bar" style={{ height: `${item.height}%` }}>
+                        <div className="bar-tooltip">
+                          <strong style={{ color: '#fcd535' }}>{item.quarter}</strong><br/>
+                          {item.value} tỷ VNĐ
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                  <div className="cp-x-axis">
+                    {charterCapitalHistory.map((item, idx) => (
+                      <span key={idx}>{item.quarter}</span>
+                    ))}
+                  </div>
+                  <div className="cp-chart-caption">
+                    Đơn vị hiển thị: tỷ đồng. Mốc mới nhất đang ở mức khoảng {charterCapitalHistory.length ? `${charterCapitalHistory[charterCapitalHistory.length - 1].value} tỷ đồng` : 'đang cập nhật'}.
+                  </div>
+                </div>
+              </div>
+
+              <div className="profile-section-card">
+                <h4>Tổng quan doanh nghiệp</h4>
+                {profileData.company_description ? (
+                  <p className="profile-section-description">{profileData.company_description}</p>
+                ) : (
+                  <p className="profile-empty">Chưa đồng bộ được phần mô tả doanh nghiệp từ nguồn dữ liệu trực tuyến.</p>
+                )}
+              </div>
+
+              <div className="cp-primary-card">
+                <h4>Tổ chức tư vấn niêm yết</h4>
+                <div className="audit-item">
+                  {listingAdvisor?.link ? (
+                    <a href={listingAdvisor.link} target="_blank" rel="noopener noreferrer" className="audit-name">
+                      {listingAdvisor.name} ↗
+                    </a>
+                  ) : (
+                    <span className="audit-name">{listingAdvisor?.name || 'Chưa có dữ liệu tư vấn niêm yết'}</span>
+                  )}
                 </div>
               </div>
             </div>
 
             <div className="cp-right">
-              <h4>Tổ chức tư vấn niêm yết</h4>
-              <div className="audit-item" style={{marginBottom: '20px'}}>
-                <a href={profile.tu_van.link} target="_blank" rel="noopener noreferrer" className="audit-name">
-                  {profile.tu_van.name} ↗
-                </a>
+              <div className="cp-primary-card">
+                <h4>Hồ sơ đồng bộ tự động</h4>
+                <div className="audit-list">
+                  {profileData.website && (
+                    <div className="audit-item">
+                      <span className="audit-year">Website</span>
+                      <a href={profileData.website} target="_blank" rel="noopener noreferrer" className="audit-name">
+                        {profileData.website} ↗
+                      </a>
+                    </div>
+                  )}
+                  {profileData.phone && (
+                    <div className="audit-item">
+                      <span className="audit-year">Điện thoại</span>
+                      <span className="audit-name">{profileData.phone}</span>
+                    </div>
+                  )}
+                  {profileData.email && (
+                    <div className="audit-item">
+                      <span className="audit-year">Email</span>
+                      <span className="audit-name">{profileData.email}</span>
+                    </div>
+                  )}
+                  {profileData.auditor && (
+                    <div className="audit-item">
+                      <span className="audit-year">Kiểm toán</span>
+                      <span className="audit-name">{profileData.auditor}</span>
+                    </div>
+                  )}
+                  {profileData.address && (
+                    <div className="audit-item" style={{ alignItems: 'flex-start' }}>
+                      <span className="audit-year">Địa chỉ</span>
+                      <span className="audit-name" style={{ textAlign: 'right', lineHeight: 1.5 }}>{profileData.address}</span>
+                    </div>
+                  )}
+                </div>
               </div>
-              
-              <h4>Tổ chức kiểm toán</h4>
-              <div className="audit-list">
-                {profile.auditors.map((auditor, i) => (
-                  <div key={i} className="audit-item">
-                    <span className="audit-year">{auditor.year}</span>
-                    <a href={auditor.link} target="_blank" rel="noopener noreferrer" className="audit-name">
-                      {auditor.name} ↗
-                    </a>
-                  </div>
-                ))}
+
+              <div className="cp-primary-card">
+                <h4>Tổ chức kiểm toán</h4>
+                <div className="audit-list">
+                  {auditorTimeline.map((auditor, i) => (
+                    <div key={i} className="audit-item">
+                      <span className="audit-year">{auditor.year}</span>
+                      {auditor.link ? (
+                        <a href={auditor.link} target="_blank" rel="noopener noreferrer" className="audit-name">
+                          {auditor.name} ↗
+                        </a>
+                      ) : (
+                        <span className="audit-name">{auditor.name}</span>
+                      )}
+                    </div>
+                  ))}
+                </div>
               </div>
+
+            </div>
+          </div>
+
+          <div className="cp-secondary-grid">
+            <div className="profile-section-card">
+              <h4>Ban lãnh đạo nổi bật</h4>
+              {profileData.leadership?.length ? (
+                <div className="profile-rich-list">
+                  {profileData.leadership.map((leader, index) => (
+                    <div key={`${leader.name}-${index}`} className="profile-rich-item">
+                      <div className="profile-rich-main">
+                        <span className="profile-rich-name">{leader.name}</span>
+                        <span className="profile-rich-subtitle">{leader.position}</span>
+                      </div>
+                      <div className="profile-rich-meta">
+                        {leader.ownership_percent && <span className="profile-chip">{leader.ownership_percent}</span>}
+                        {leader.updated_at && <span className="profile-rich-subtitle">{leader.updated_at}</span>}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              ) : (
+                <p className="profile-empty">Chưa có dữ liệu lãnh đạo từ nguồn crawl tại thời điểm hiện tại.</p>
+              )}
             </div>
 
+            <div className="profile-section-card">
+              <h4>Cổ đông lớn</h4>
+              {profileData.major_shareholders?.length ? (
+                <div className="profile-rich-list">
+                  {profileData.major_shareholders.map((holder, index) => (
+                    <div key={`${holder.name}-${index}`} className="profile-rich-item">
+                      <div className="profile-rich-main">
+                        <span className="profile-rich-name">{holder.name}</span>
+                        {holder.shares && <span className="profile-rich-subtitle">{holder.shares} cổ phiếu</span>}
+                      </div>
+                      <div className="profile-rich-meta">
+                        {holder.ownership_percent && <span className="profile-chip">{holder.ownership_percent}</span>}
+                        {holder.updated_at && <span className="profile-rich-subtitle">{holder.updated_at}</span>}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              ) : (
+                <p className="profile-empty">Chưa có dữ liệu cổ đông lớn từ nguồn crawl tại thời điểm hiện tại.</p>
+              )}
+            </div>
           </div>
         </div>
       )}
 
       {activeTab === 'news' && (
-        <div style={{ paddingBottom: '50px' }}>
-          <div className="news-header">
-            <h2 style={{ margin: 0, color: '#eaecef' }}>ĐIỂM TIN VĨ MÔ & NGÀNH NGÂN HÀNG</h2>
-            <input 
-              type="text" 
-              className="search-input" 
-              placeholder="Tìm kiếm từ khóa (VD: Lãi suất, VCB, Khối ngoại)..." 
-              value={searchQuery}
-              onChange={(e) => setSearchQuery(e.target.value)}
-            />
+        <div className="news-shell">
+          <div className="news-hero">
+            <div className="news-hero-main">
+              <span className="news-kicker">News Intelligence</span>
+              <h2 className="news-hero-title">Trung tâm tin tức vĩ mô và ngân hàng</h2>
+              <p className="news-hero-subtitle">
+                Hệ thống tổng hợp tin từ nhiều nguồn và cho phép bóc riêng luồng tin của từng ngân hàng hoặc theo dõi toàn thị trường theo thời gian thực.
+              </p>
+              <div className="news-pill-row">
+                <span className="news-pill active">Trọng tâm: {newsFocusTicker === 'ALL' ? 'Toàn ngành' : newsFocusTicker}</span>
+                <span className="news-pill">Nguồn theo dõi: {newsInsights.uniqueSourcesCount}</span>
+                <span className="news-pill">Cập nhật gần nhất: {newsInsights.latestPublished}</span>
+              </div>
+              <div className="news-focus-row">
+                {['ALL', 'VCB', 'BID', 'CTG'].map((bankCode) => (
+                  <button
+                    key={bankCode}
+                    type="button"
+                    className={`news-focus-chip ${newsFocusTicker === bankCode ? 'active' : ''}`}
+                    onClick={() => setNewsFocusTicker(bankCode)}
+                  >
+                    {bankCode === 'ALL' ? 'Toàn ngành' : bankCode}
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            <div className="news-hero-side">
+              <div className="news-header">
+                <input 
+                  type="text" 
+                  className="search-input" 
+                  placeholder="Tìm kiếm linh hoạt (VD: VCB, Vietcombank, lãi suất, tỷ giá)..." 
+                  value={searchQuery}
+                  onChange={(e) => setSearchQuery(e.target.value)}
+                />
+              </div>
+              <div className="news-search-note">
+                Hỗ trợ alias tự động: gõ <strong>VCB</strong> vẫn hiểu là <strong>Vietcombank</strong>, tương tự với <strong>BID/BIDV</strong> và <strong>CTG/VietinBank</strong>.
+              </div>
+
+              <div className="news-stats-grid">
+                <div className="news-stat-card">
+                  <span className="news-stat-label">Bài đang hiển thị</span>
+                  <span className="news-stat-value">{newsInsights.enrichedArticles.length}</span>
+                  <span className="news-stat-sub">Sau khi áp dụng bộ lọc tìm kiếm</span>
+                </div>
+                <div className="news-stat-card">
+                  <span className="news-stat-label">Bài liên quan {newsFocusTicker === 'ALL' ? 'trọng tâm đang chọn' : newsFocusTicker}</span>
+                  <span className="news-stat-value">{newsInsights.tickerFocusedCount}</span>
+                  <span className="news-stat-sub">Khi chọn ngân hàng, hệ thống ưu tiên bài liên quan nhưng vẫn giữ cả tin nền của toàn ngành</span>
+                </div>
+                <div className="news-stat-card">
+                  <span className="news-stat-label">Bài ưu tiên</span>
+                  <span className="news-stat-value">{newsInsights.priorityArticlesCount}</span>
+                  <span className="news-stat-sub">Nhóm bài có mức độ liên quan cao để đọc trước</span>
+                </div>
+              </div>
+            </div>
           </div>
           
           {loadingNews ? (
-             <div style={{ textAlign: 'center', color: '#fcd535', marginTop: '50px' }}>Đang tổng hợp tin tức từ CafeF, Vietstock, VNExpress...</div>
-          ) : filteredNews.length === 0 ? (
-             <div style={{ textAlign: 'center', color: '#848e9c', marginTop: '50px' }}>Không tìm thấy bài báo nào khớp với từ khóa "{searchQuery}".</div>
-          ) : (
-            <div className="news-grid">
-              {filteredNews.map((article, index) => (
-                <div key={index} className="news-card">
-                  <a href={article.link} target="_blank" rel="noopener noreferrer">
-                    <h3>{article.title}</h3>
-                    <div className="news-meta">
-                      <span className="news-source">[{article.source}]</span>
-                      <span>{article.published}</span>
-                    </div>
-                    <div className="desc" dangerouslySetInnerHTML={{ __html: article.description }}></div>
-                  </a>
-                </div>
-              ))}
+            <div className="news-featured-card" style={{ textAlign: 'center', color: '#fcd535' }}>
+              Đang tổng hợp tin tức từ CafeF, Vietstock, VNExpress...
             </div>
+          ) : filteredNews.length === 0 ? (
+            <div className="news-featured-card" style={{ textAlign: 'center', color: '#848e9c' }}>
+              Không tìm thấy bài báo nào khớp với từ khóa "{searchQuery}".
+            </div>
+          ) : (
+            <>
+              {newsInsights.featuredArticle && (
+                <div className="news-featured-card">
+                  <div className="news-featured-left">
+                    <div className="news-source-row">
+                      <span className="news-source-badge">{newsInsights.featuredArticle.source}</span>
+                      <span className="news-time-badge">{newsInsights.featuredArticle.published}</span>
+                      <span className={`news-tag ${newsInsights.featuredArticle.isTickerFocused ? '' : 'macro'}`}>
+                        {newsInsights.featuredArticle.isTickerFocused
+                          ? `Trọng tâm ${newsFocusTicker === 'ALL' ? 'ngân hàng' : newsFocusTicker}`
+                          : newsInsights.featuredArticle.isBankingRelated ? 'Tin ngân hàng' : 'Tin vĩ mô ngành'}
+                      </span>
+                      <span className={`news-relevance-badge ${newsInsights.featuredArticle.relevanceTone}`}>
+                        Liên quan {newsInsights.featuredArticle.relevanceLabel}
+                      </span>
+                    </div>
+                    <h3 className="news-featured-title">{newsInsights.featuredArticle.title}</h3>
+                    <p className="news-featured-desc">
+                      {newsInsights.featuredArticle.cleanDescription || 'Bài viết đang được theo dõi để bổ sung tín hiệu cho hệ thống khuyến nghị đầu tư.'}
+                    </p>
+                    <div className="news-card-insight">{newsInsights.featuredArticle.relevanceSummary}</div>
+                    <a href={newsInsights.featuredArticle.link} target="_blank" rel="noopener noreferrer" className="news-cta">
+                      Xem bài phân tích đầy đủ ↗
+                    </a>
+                  </div>
+
+                  <div className="news-featured-right">
+                    {newsInsights.featuredArticle.image_url ? (
+                      <img
+                        src={newsInsights.featuredArticle.image_url}
+                        alt={newsInsights.featuredArticle.title}
+                        className="news-featured-image"
+                      />
+                    ) : (
+                      <div className="news-featured-image placeholder">
+                        Ảnh xem trước đang được cập nhật
+                      </div>
+                    )}
+                    <span className="news-stat-label">Nguồn đang chiếm tỷ trọng lớn</span>
+                    <div className="news-chip-grid">
+                      {newsInsights.sourceChips.map((item) => (
+                        <div key={item.sourceName} className="news-source-chip">
+                          <span>{item.sourceName}</span>
+                          <span className="news-source-count">{item.count}</span>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                </div>
+              )}
+
+              <div className="news-grid">
+                {newsInsights.secondaryArticles.map((article, index) => (
+                  <div key={`${article.link}-${index}`} className="news-card">
+                    <a href={article.link} target="_blank" rel="noopener noreferrer">
+                      {article.image_url ? (
+                        <img src={article.image_url} alt={article.title} className="news-card-image" />
+                      ) : (
+                        <div className="news-card-image placeholder">
+                          Chưa có ảnh xem trước
+                        </div>
+                      )}
+                      <div className="news-meta">
+                        <span className="news-source">[{article.source}]</span>
+                        <span>{article.published}</span>
+                      </div>
+                      <h3>{article.title}</h3>
+                      <div className="desc">
+                        {article.cleanDescription || 'Bài viết đang được theo dõi để bổ sung bối cảnh cho mô hình dự báo.'}
+                      </div>
+                      <div className="news-card-insight">{article.relevanceSummary}</div>
+                      <div className="news-card-footer">
+                        <span className={`news-tag ${article.isTickerFocused ? '' : article.isBankingRelated ? 'macro' : 'neutral'}`}>
+                          {article.isTickerFocused
+                            ? `Liên quan ${newsFocusTicker === 'ALL' ? 'ngân hàng' : newsFocusTicker}`
+                            : article.isBankingRelated
+                              ? 'Tin ngân hàng'
+                              : 'Theo dõi chung'}
+                        </span>
+                        <span className={`news-relevance-badge ${article.relevanceTone}`}>
+                          {article.relevanceLabel}
+                        </span>
+                      </div>
+                    </a>
+                  </div>
+                ))}
+              </div>
+            </>
           )}
         </div>
       )}
@@ -840,3 +1635,6 @@ function App() {
 }
 
 export default App;
+
+
+

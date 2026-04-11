@@ -47,6 +47,7 @@ def train_model(ticker='VCB'):
     feature_scaler = MinMaxScaler(feature_range=(0, 1))
     target_scaler = MinMaxScaler(feature_range=(-1, 1)) 
     
+    # Transform dữ liệu và lưu scaler để tái sử dụng
     scaled_train_data = feature_scaler.fit_transform(train_data)
     scaled_train_target = target_scaler.fit_transform(train_target)
     scaled_val_data = feature_scaler.transform(val_data)
