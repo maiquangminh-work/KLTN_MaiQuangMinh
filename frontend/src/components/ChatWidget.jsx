@@ -1,4 +1,6 @@
-﻿function ChatWidget({
+﻿import QuickPrompts from './ui/QuickPrompts';
+
+function ChatWidget({
   isChatOpen,
   setIsChatOpen,
   chatSize,
@@ -9,7 +11,12 @@
   chatInput,
   setChatInput,
   handleSendMessage,
+  ticker = 'VCB',
+  language = 'vi',
 }) {
+  const handleQuickPrompt = (text) => {
+    handleSendMessage(text);
+  };
   return (
     <div className="chat-widget">
       {isChatOpen && (
@@ -61,15 +68,19 @@
             <div ref={chatEndRef} />
           </div>
 
+          {chatHistory.length <= 1 && (
+            <QuickPrompts onSelect={handleQuickPrompt} ticker={ticker} language={language} />
+          )}
+
           <div className="chat-input-area">
             <input
               type="text"
-              placeholder="Hỏi AI..."
+              placeholder={language === 'en' ? 'Ask AI...' : 'Hỏi AI...'}
               value={chatInput}
               onChange={(e) => setChatInput(e.target.value)}
               onKeyDown={(e) => e.key === 'Enter' && handleSendMessage()}
             />
-            <button className="send-btn" onClick={handleSendMessage}>GỬI</button>
+            <button className="send-btn" onClick={handleSendMessage}>{language === 'en' ? 'SEND' : 'GỬI'}</button>
           </div>
         </div>
       )}

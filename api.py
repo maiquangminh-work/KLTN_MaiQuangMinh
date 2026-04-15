@@ -1,4 +1,4 @@
-from fastapi import FastAPI, HTTPException, Request
+from fastapi import FastAPI, HTTPException, Request, Query
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 import pandas as pd
@@ -41,6 +41,9 @@ CONTEXT_CACHE_TTL_SECONDS = 300
 MARKET_CONTEXT_CACHE = {}
 COMPANY_PROFILE_CACHE_TTL_SECONDS = 43200
 COMPANY_PROFILE_CACHE = {}
+PREDICTION_CACHE_TTL_SECONDS = 180
+PREDICTION_CACHE = {}
+FAST_DEMO_MODE = os.getenv("FAST_DEMO_MODE", "1").strip().lower() in {"1", "true", "yes", "on"}
 
 WEBSITE_NGAN_HANG_MAC_DINH = {
     "VCB": "https://www.vietcombank.com.vn",
@@ -112,9 +115,15 @@ TEN_HIEN_THI_MO_HINH = {
 
 RSS_URLS = [
     "https://cafef.vn/tai-chinh-ngan-hang.rss",
+    "https://cafef.vn/thi-truong-chung-khoan.rss",
+    "https://cafef.vn/doanh-nghiep.rss",
     "https://vietstock.vn/rss/tai-chinh.rss",
+    "https://vietstock.vn/rss/chung-khoan.rss",
+    "https://vietstock.vn/rss/doanh-nghiep.rss",
     "https://vnexpress.net/rss/kinh-doanh.rss",
+    "https://vnexpress.net/rss/kinh-doanh/chung-khoan.rss",
     "https://baodautu.vn/ngan-hang.rss",
+    "https://baodautu.vn/tai-chinh-chung-khoan.rss",
 ]
 
 TU_KHOA_THEO_MA = {
@@ -854,6 +863,22 @@ def _lay_profile_cached(ticker_name, force_refresh=False):
         fallback_profile.update(sqlite_profile)
     fallback_profile["website"] = fallback_profile.get("website") or WEBSITE_NGAN_HANG_MAC_DINH.get(ticker_name)
 
+    if FAST_DEMO_MODE and not force_refresh:
+        profile_data = dict(fallback_profile)
+        profile_data.update(
+            {
+                "profile_source": "Dá»¯ liá»‡u ná»™i bá»™ (demo)",
+                "profile_updated_at": datetime.datetime.now().strftime("%d/%m/%Y %H:%M"),
+                "profile_status": "fallback",
+                "crawl_note": "Há»‡ thá»‘ng Ä‘ang cháº¡y á»Ÿ cháº¿ Ä‘á»™ demo nÃªn Æ°u tiÃªn hiá»ƒn thá»‹ dá»¯ liá»‡u ná»™i bá»™ Ä‘á»ƒ giá»¯ tá»‘c Ä‘á»™ vÃ  Ä‘á»™ á»•n Ä‘á»‹nh.",
+            }
+        )
+        COMPANY_PROFILE_CACHE[ticker_name] = {
+            "timestamp": current_time,
+            "data": profile_data,
+        }
+        return profile_data
+
     source_label, crawled_payload, crawl_error = _crawl_profile_tu_vnstock(ticker_name)
 
     if crawled_payload:
@@ -969,6 +994,15 @@ def _lay_boi_canh_cached(ticker_name):
     if cached_item and (now_ts - cached_item["timestamp"] <= CONTEXT_CACHE_TTL_SECONDS):
         return cached_item["data"]
 
+    if FAST_DEMO_MODE:
+        context_data = _tao_boi_canh_mac_dinh(ticker_name)
+        context_data["top_signals"] = ["Cháº¿ Ä‘á»™ demo: Æ°u tiÃªn tá»‘c Ä‘á»™ vÃ  Ä‘á»™ á»•n Ä‘á»‹nh, bá»‘i cáº£nh Ä‘ang dÃ¹ng dá»¯ liá»‡u an toÃ n."]
+        MARKET_CONTEXT_CACHE[ticker_name] = {
+            "timestamp": now_ts,
+            "data": context_data,
+        }
+        return context_data
+
     context_data = _phan_tich_boi_canh_thi_truong(ticker_name)
     MARKET_CONTEXT_CACHE[ticker_name] = {
         "timestamp": now_ts,
@@ -977,52 +1011,95 @@ def _lay_boi_canh_cached(ticker_name):
     return context_data
 
 
+def _doc_du_lieu_local_processed(ticker_name):
+    ticker_name = _kiem_tra_ticker_hop_le(ticker_name)
+    csv_path = os.path.join(BASE_DIR, "data", "processed", f"{ticker_name}_features.csv")
+    if not os.path.exists(csv_path):
+        raise FileNotFoundError(f"KhÃ´ng tÃ¬m tháº¥y dá»¯ liá»‡u local cho {ticker_name}.")
+
+    df = pd.read_csv(csv_path)
+    if "time" not in df.columns:
+        raise ValueError(f"Dá»¯ liá»‡u local cho {ticker_name} thiáº¿u cá»™t time.")
+
+    df["time"] = pd.to_datetime(df["time"])
+    df = df.sort_values(by="time").reset_index(drop=True)
+
+    if "close_winsorized" not in df.columns and "close" in df.columns:
+        df["close_winsorized"] = df["close"]
+    if "sma_10" not in df.columns:
+        df["sma_10"] = df["close_winsorized"].rolling(window=10).mean()
+    if "sma_20" not in df.columns:
+        df["sma_20"] = df["close_winsorized"].rolling(window=20).mean()
+    if "rsi_14" not in df.columns:
+        delta = df["close_winsorized"].diff()
+        rs = (delta.where(delta > 0, 0)).rolling(window=14).mean() / (-delta.where(delta < 0, 0)).rolling(window=14).mean()
+        df["rsi_14"] = 100 - (100 / (1 + rs))
+
+    required_columns = ["open", "high", "low", "close_winsorized", "volume", "sma_10", "sma_20", "rsi_14"]
+    df = df.dropna(subset=[col for col in required_columns if col in df.columns]).reset_index(drop=True)
+    return df
+
+
 def _tinh_khuyen_nghi_va_do_tin_cay(current_price, predicted_price, threshold, market_context):
     current_price = float(current_price or 0)
     predicted_price = float(predicted_price or 0)
-    threshold = float(threshold or 0.008)
+    threshold = float(threshold or 0.0004)
     market_context = market_context or _tao_boi_canh_mac_dinh("VCB")
 
     price_diff = predicted_price - current_price
     threshold_value = current_price * threshold
     move_ratio = abs(price_diff) / threshold_value if threshold_value > 0 else 0
 
-    recommendation = "GIỮ CỔ PHIẾU"
-    recommendation_color = "#fcd535"
-    recommendation_note = "Khuyến nghị hiện được sinh từ chênh lệch dự báo T+1 và ngưỡng mặc định của hệ thống."
-
-    if price_diff > threshold_value:
-        recommendation = "MUA VÀO"
-        recommendation_color = "#0ecb81"
-    elif price_diff < -threshold_value:
-        recommendation = "BÁN RA"
-        recommendation_color = "#f6465d"
-
     market_pressure_score = float(market_context.get("overall_market_pressure", 50.0))
     banking_support_score = float(market_context.get("banking_sector_score", 50.0))
 
-    if recommendation == "MUA VÀO" and market_pressure_score >= 65:
-        recommendation_note = "Mô hình nghiêng về chiều tăng nhưng bối cảnh vĩ mô - chính trị đang rủi ro cao, nên ưu tiên giải ngân thăm dò."
-    elif recommendation == "BÁN RA" and market_pressure_score >= 65:
-        recommendation_note = "Tín hiệu giảm giá đang đi cùng bối cảnh rủi ro cao, phù hợp với góc nhìn phòng thủ."
-    elif market_pressure_score < 45:
-        recommendation_note = "Bối cảnh thị trường hiện tương đối ổn định, phù hợp để đọc khuyến nghị theo hướng tích cực hơn."
+    positive_context_score = ((100.0 - market_pressure_score) * 0.55) + (banking_support_score * 0.45)
+    negative_context_score = (market_pressure_score * 0.7) + ((100.0 - banking_support_score) * 0.3)
+    neutral_context_score = 100.0 - (abs(market_pressure_score - 50.0) * 1.15) - (abs(banking_support_score - 50.0) * 0.85)
 
-    if recommendation == "GIỮ CỔ PHIẾU":
-        price_signal_score = max(35.0, 88.0 - min(move_ratio, 2.2) * 38.0)
+    bias_threshold = threshold_value * 0.6
+    if price_diff > bias_threshold:
+        directional_bias = "positive"
+        price_signal_score = min(100.0, 52.0 + move_ratio * 22.0)
+        context_alignment_score = positive_context_score
+    elif price_diff < -bias_threshold:
+        directional_bias = "negative"
+        price_signal_score = min(100.0, 52.0 + move_ratio * 22.0)
+        context_alignment_score = negative_context_score
     else:
-        price_signal_score = min(100.0, 40.0 + move_ratio * 30.0)
-
-    if recommendation == "MUA VÀO":
-        context_alignment_score = ((100.0 - market_pressure_score) * 0.55) + (banking_support_score * 0.45)
-    elif recommendation == "BÁN RA":
-        context_alignment_score = (market_pressure_score * 0.7) + ((100.0 - banking_support_score) * 0.3)
-    else:
-        context_alignment_score = 100.0 - (abs(market_pressure_score - 50.0) * 1.15) - (abs(banking_support_score - 50.0) * 0.85)
+        directional_bias = "neutral"
+        price_signal_score = max(40.0, 58.0 - min(move_ratio, 1.4) * 12.0)
+        context_alignment_score = neutral_context_score
 
     price_signal_score = _gioi_han_diem(price_signal_score)
     context_alignment_score = _gioi_han_diem(context_alignment_score)
-    confidence_score = int(round((price_signal_score * 0.6) + (context_alignment_score * 0.4)))
+    recommendation_score = int(round((price_signal_score * 0.6) + (context_alignment_score * 0.4)))
+    confidence_score = recommendation_score
+
+    recommendation = "TRUNG LẬP"
+    recommendation_color = "#fcd535"
+    recommendation_note = "Tín hiệu giá và bối cảnh hiện chưa tạo ra một lợi thế đủ rõ để nâng hạng triển vọng ngắn hạn."
+
+    if directional_bias == "positive" and recommendation_score >= 68:
+        recommendation = "KHẢ QUAN"
+        recommendation_color = "#0ecb81"
+        if market_pressure_score >= 65:
+            recommendation_note = "Tín hiệu giá đang nghiêng theo chiều tích cực, nhưng bối cảnh vĩ mô - chính trị còn nhiều biến số nên phù hợp đọc theo hướng tích cực có kiểm soát."
+        elif banking_support_score >= 60:
+            recommendation_note = "Tín hiệu giá và xung lực ngành ngân hàng đang đồng thuận tương đối tốt, phù hợp xếp hạng triển vọng ngắn hạn ở mức khả quan."
+        else:
+            recommendation_note = "Giá dự báo T+1 đang nghiêng lên và bối cảnh thị trường chưa tạo áp lực lớn, phù hợp xếp hạng triển vọng ngắn hạn ở mức khả quan."
+    elif directional_bias == "negative" and recommendation_score >= 68:
+        recommendation = "KÉM KHẢ QUAN"
+        recommendation_color = "#f6465d"
+        if market_pressure_score >= 65:
+            recommendation_note = "Tín hiệu giá đang suy yếu trong bối cảnh rủi ro thị trường gia tăng, phù hợp xếp hạng triển vọng ngắn hạn ở mức kém khả quan."
+        elif market_context.get("political_risk_score", 50.0) >= 60:
+            recommendation_note = "Rủi ro ngoại sinh đang tăng lên trong khi tín hiệu giá chưa thuận lợi, phù hợp với góc nhìn thận trọng hơn trong ngắn hạn."
+        else:
+            recommendation_note = "Giá dự báo T+1 đang nghiêng xuống và bối cảnh chưa ủng hộ rõ cho kịch bản hồi phục, nên triển vọng ngắn hạn được xếp ở mức kém khả quan."
+    elif market_pressure_score < 45 and banking_support_score >= 55:
+        recommendation_note = "Bối cảnh hiện tương đối ổn định, tuy nhiên tín hiệu giá chưa đủ mạnh để vượt khỏi vùng trung lập."
 
     if confidence_score >= 75:
         confidence_label = "Cao"
@@ -1033,13 +1110,13 @@ def _tinh_khuyen_nghi_va_do_tin_cay(current_price, predicted_price, threshold, m
 
     confidence_note = "Độ tự tin đang được tính từ độ mạnh của tín hiệu giá và mức đồng thuận của bối cảnh thị trường."
     if price_signal_score >= 75 and context_alignment_score >= 65:
-        confidence_note = "Tín hiệu giá đủ mạnh và bối cảnh hiện tại đang đồng thuận tương đối tốt với khuyến nghị."
+        confidence_note = "Tín hiệu giá đủ mạnh và bối cảnh hiện tại đang đồng thuận tương đối tốt với xếp hạng triển vọng."
     elif price_signal_score >= 75 and context_alignment_score < 50:
-        confidence_note = "Tín hiệu giá khá rõ, nhưng tin tức và bối cảnh bên ngoài chưa đồng thuận hoàn toàn nên cần quản trị rủi ro kỹ hơn."
+        confidence_note = "Tín hiệu giá khá rõ, nhưng tin tức và bối cảnh bên ngoài chưa đồng thuận hoàn toàn nên cần đọc xếp hạng triển vọng theo hướng thận trọng hơn."
     elif price_signal_score < 55 and context_alignment_score >= 65:
-        confidence_note = "Bối cảnh hỗ trợ tốt hơn tín hiệu giá, vì vậy nên xem khuyến nghị như cảnh báo sớm hơn là tín hiệu mạnh."
-    elif recommendation == "GIỮ CỔ PHIẾU":
-        confidence_note = "Giá dự báo chưa lệch đủ xa khỏi ngưỡng hành động và bối cảnh hiện chưa tạo áp lực một chiều quá lớn."
+        confidence_note = "Bối cảnh đang hỗ trợ tốt hơn độ mạnh tín hiệu giá, vì vậy nên xem đây là một tín hiệu định hướng hơn là xác nhận hành động mạnh."
+    elif recommendation == "TRUNG LẬP":
+        confidence_note = "Giá dự báo vẫn đang nằm gần vùng trung tính, trong khi bối cảnh hiện chưa tạo ra sức ép một chiều đủ lớn để thay đổi xếp hạng."
 
     return {
         "recommendation": recommendation,
@@ -1048,8 +1125,10 @@ def _tinh_khuyen_nghi_va_do_tin_cay(current_price, predicted_price, threshold, m
         "recommendation_confidence_score": confidence_score,
         "recommendation_confidence_label": confidence_label,
         "recommendation_confidence_note": confidence_note,
+        "recommendation_score": recommendation_score,
         "price_signal_score": round(price_signal_score, 2),
         "context_alignment_score": round(context_alignment_score, 2),
+        "directional_bias": directional_bias,
     }
 
 
@@ -1271,13 +1350,19 @@ def _phan_tich_boi_canh_thi_truong(ticker_name):
     }
 
 def fetch_live_data(ticker_name):
+    if FAST_DEMO_MODE:
+        return _doc_du_lieu_local_processed(ticker_name)
+
     today = datetime.datetime.today().strftime('%Y-%m-%d')
     try:
         stock = Vnstock().stock(symbol=ticker_name, source='DNSE')
         df = stock.quote.history(start="2015-01-01", end=today)
-    except:
-        stock = Vnstock().stock(symbol=ticker_name, source='VCI')
-        df = stock.quote.history(start="2015-01-01", end=today)
+    except Exception:
+        try:
+            stock = Vnstock().stock(symbol=ticker_name, source='VCI')
+            df = stock.quote.history(start="2015-01-01", end=today)
+        except Exception:
+            return _doc_du_lieu_local_processed(ticker_name)
         
     df['time'] = pd.to_datetime(df['time'])
     df = df.sort_values(by='time').reset_index(drop=True)
@@ -1320,6 +1405,10 @@ def get_ai_components(ticker_name):
 @app.get("/api/predict/{ticker}")
 def get_prediction(ticker: str):
     ticker = _kiem_tra_ticker_hop_le(ticker)
+    now_ts = time.time()
+    cached_item = PREDICTION_CACHE.get(ticker)
+    if cached_item and (now_ts - cached_item["timestamp"] <= PREDICTION_CACHE_TTL_SECONDS):
+        return cached_item["data"]
 
     try:
         df = fetch_live_data(ticker)
@@ -1365,7 +1454,7 @@ def get_prediction(ticker: str):
         recommendation_bundle = _tinh_khuyen_nghi_va_do_tin_cay(
             current_price=float(df['close_winsorized'].iloc[-1]),
             predicted_price=float(predictions[0]["predicted_price"]),
-            threshold=0.008,
+            threshold=0.0004,
             market_context=market_context,
         )
 
@@ -1386,21 +1475,26 @@ def get_prediction(ticker: str):
             },
         )
         
-        return {
+        response_payload = {
             "ticker": ticker,
             "current_price": float(df['close_winsorized'].iloc[-1]),
             "current_volume": float(df['volume'].iloc[-1]),
             "rsi_14": float(df['rsi_14'].iloc[-1]),
             "latest_data_time": str(df['time'].iloc[-1]).split(' ')[0],
-            "recommendation_threshold": 0.008,
+            "recommendation_threshold": 0.0004,
             "analysis_signal_label": "Tín hiệu hỗ trợ phân tích",
             "analysis_signal": attention_data,
             "market_context": market_context,
             "predictions": predictions,
             **recommendation_bundle,
             "chart_data": chart_data.to_dict(orient="records"),
-            "attention_weights": attention_data # Bắn mảng XAI ra cho React
+            "attention_weights": attention_data 
         }
+        PREDICTION_CACHE[ticker] = {
+            "timestamp": now_ts,
+            "data": response_payload,
+        }
+        return response_payload
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
@@ -1531,15 +1625,10 @@ def _lay_anh_tu_entry_rss(entry):
     return None
 
 @app.get("/api/news")
-async def get_market_news():
+async def get_market_news(limit: int = Query(default=200, ge=20, le=400)):
     try:
         # 1. Bổ sung các nguồn báo uy tín và miễn phí
-        rss_urls = [
-            "https://cafef.vn/tai-chinh-ngan-hang.rss",
-            "https://vietstock.vn/rss/tai-chinh.rss",
-            "https://vnexpress.net/rss/kinh-doanh.rss",
-            "https://baodautu.vn/ngan-hang.rss"
-        ]
+        rss_urls = RSS_URLS
         
         # 2. Mở rộng từ khóa
         keywords = ['vcb', 'vietcombank', 'bid', 'bidv', 'ctg', 'vietinbank', 'lãi suất', 'nhnn', 'tín dụng', 'ngân hàng', 'cổ phiếu', 'chứng khoán', 'vn-index']
@@ -1570,11 +1659,29 @@ async def get_market_news():
         all_articles.sort(key=lambda x: x['timestamp'], reverse=True)
         
         # Nâng số lượng tin tức lên 50 để đa dạng hơn, sau đó frontend có thể chọn lọc hiển thị
-        return {"status": "success", "news": all_articles[:50]}
+        deduped_articles = []
+        seen_links = set()
+        seen_title_time = set()
+        for article in all_articles:
+            article_link = (article.get("link") or "").strip()
+            article_key = (
+                (article.get("title") or "").strip().lower(),
+                article.get("timestamp"),
+            )
+            if article_link and article_link in seen_links:
+                continue
+            if article_key in seen_title_time:
+                continue
+            if article_link:
+                seen_links.add(article_link)
+            seen_title_time.add(article_key)
+            deduped_articles.append(article)
+
+        return {"status": "success", "news": deduped_articles[:limit]}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
-# Cấu hình Gemini
+# Gemini settings
 
 @app.post("/api/chat")
 async def ai_assistant(request: Request):
@@ -1584,7 +1691,7 @@ async def ai_assistant(request: Request):
         ticker = body.get("ticker")
         current_data = body.get("current_data")
 
-        # 1. Tạo bối cảnh cho AI
+        # 1. AI context
         context = f"""
         Bạn là một Chuyên gia Kinh tế trưởng, Giám đốc Đầu tư, đồng thời là một Nhà phân tích Địa chính trị quốc tế xuất sắc.
 
@@ -1611,7 +1718,7 @@ async def ai_assistant(request: Request):
                 detail="Chưa cấu hình GROQ_API_KEY trên máy chủ."
             )
         
-        # 3. Gọi API bằng request giả lập
+        # 3. Call API 
         url = "https://api.groq.com/openai/v1/chat/completions"
         
         payload = {
@@ -1679,4 +1786,276 @@ def get_company_profile(ticker: str):
         db.close()
 
 
+# ─── PHASE 2: Model Performance & Signal History ──────────────────────────────
 
+def _doc_toan_bo_lich_su_tin_cay(ticker_name):
+    """Đọc TOÀN BỘ confidence history (không giới hạn limit) cho performance analysis."""
+    file_path = os.path.join(CONFIDENCE_LOG_DIR, f"{ticker_name.lower()}_confidence_history.jsonl")
+    if not os.path.exists(file_path):
+        return []
+    rows = []
+    with open(file_path, "r", encoding="utf-8") as f:
+        for line in f:
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                rows.append(json.loads(line))
+            except json.JSONDecodeError:
+                continue
+    return rows
+
+
+def _parse_captured_at(date_str):
+    """Parse ngày DD/MM/YYYY HH:MM:SS → datetime object."""
+    for fmt in ("%d/%m/%Y %H:%M:%S", "%d/%m/%Y", "%Y-%m-%d %H:%M:%S", "%Y-%m-%d"):
+        try:
+            return datetime.datetime.strptime(date_str, fmt)
+        except (ValueError, TypeError):
+            continue
+    return None
+
+
+def _tinh_performance_metrics(rows):
+    """
+    Tính toán các chỉ số hiệu suất từ lịch sử dự đoán.
+    So sánh predicted_price_t1 của entry[i] với current_price của entry[i+1].
+    """
+    if len(rows) < 2:
+        return {
+            "prediction_pairs": [],
+            "summary": {"total_predictions": 0, "da_percent": 0, "mape_percent": 0, "hit_rate_percent": 0},
+            "weekly_metrics": [],
+            "confusion_matrix": {"tp": 0, "fp": 0, "tn": 0, "fn": 0},
+        }
+
+    # Parse & sort by date
+    parsed = []
+    for row in rows:
+        dt = _parse_captured_at(row.get("captured_at", ""))
+        if dt is None:
+            continue
+        parsed.append({**row, "_dt": dt})
+    parsed.sort(key=lambda x: x["_dt"])
+
+    # Deduplicate: giữ entry cuối cùng mỗi ngày
+    daily = {}
+    for entry in parsed:
+        day_key = entry["_dt"].strftime("%Y-%m-%d")
+        daily[day_key] = entry
+    sorted_days = sorted(daily.keys())
+
+    # Tạo prediction pairs
+    pairs = []
+    for i in range(len(sorted_days) - 1):
+        entry = daily[sorted_days[i]]
+        next_entry = daily[sorted_days[i + 1]]
+
+        predicted = float(entry.get("predicted_price_t1", 0))
+        actual = float(next_entry.get("current_price", 0))
+        current = float(entry.get("current_price", 0))
+
+        if current <= 0 or actual <= 0 or predicted <= 0:
+            continue
+
+        error = abs(predicted - actual) / actual * 100
+        pred_direction = 1 if predicted >= current else -1
+        actual_direction = 1 if actual >= current else -1
+        is_direction_correct = pred_direction == actual_direction
+
+        pairs.append({
+            "date": sorted_days[i],
+            "next_date": sorted_days[i + 1],
+            "current_price": round(current, 2),
+            "predicted_price": round(predicted, 2),
+            "actual_price": round(actual, 2),
+            "error_percent": round(error, 4),
+            "pred_direction": "up" if pred_direction == 1 else "down",
+            "actual_direction": "up" if actual_direction == 1 else "down",
+            "direction_correct": is_direction_correct,
+            "recommendation": entry.get("recommendation", ""),
+            "confidence_score": float(entry.get("recommendation_confidence_score", 50)),
+        })
+
+    # Summary metrics
+    total = len(pairs)
+    correct_dir = sum(1 for p in pairs if p["direction_correct"])
+    avg_mape = sum(p["error_percent"] for p in pairs) / total if total > 0 else 0
+    da_percent = (correct_dir / total * 100) if total > 0 else 0
+
+    # Signal hit rate (chỉ tính tín hiệu BUY/SELL, bỏ HOLD/GIỮ)
+    signal_pairs = [p for p in pairs if "GIỮ" not in p["recommendation"] and "TRUNG" not in p["recommendation"]]
+    signal_hits = sum(1 for p in signal_pairs if p["direction_correct"])
+    signal_total = len(signal_pairs)
+    hit_rate = (signal_hits / signal_total * 100) if signal_total > 0 else 0
+
+    # Confusion matrix cho direction (UP/DOWN)
+    tp = sum(1 for p in pairs if p["pred_direction"] == "up" and p["actual_direction"] == "up")
+    fp = sum(1 for p in pairs if p["pred_direction"] == "up" and p["actual_direction"] == "down")
+    fn = sum(1 for p in pairs if p["pred_direction"] == "down" and p["actual_direction"] == "up")
+    tn = sum(1 for p in pairs if p["pred_direction"] == "down" and p["actual_direction"] == "down")
+
+    # Weekly metrics
+    weekly = {}
+    for p in pairs:
+        dt = datetime.datetime.strptime(p["date"], "%Y-%m-%d")
+        week_key = dt.strftime("%Y-W%W")
+        if week_key not in weekly:
+            weekly[week_key] = {"correct": 0, "total": 0, "mape_sum": 0}
+        weekly[week_key]["total"] += 1
+        weekly[week_key]["mape_sum"] += p["error_percent"]
+        if p["direction_correct"]:
+            weekly[week_key]["correct"] += 1
+
+    weekly_metrics = []
+    for wk in sorted(weekly.keys()):
+        w = weekly[wk]
+        weekly_metrics.append({
+            "week": wk,
+            "da_percent": round(w["correct"] / w["total"] * 100, 2) if w["total"] > 0 else 0,
+            "mape_percent": round(w["mape_sum"] / w["total"], 4) if w["total"] > 0 else 0,
+            "sample_count": w["total"],
+        })
+
+    return {
+        "prediction_pairs": pairs,
+        "summary": {
+            "total_predictions": total,
+            "correct_directions": correct_dir,
+            "da_percent": round(da_percent, 2),
+            "mape_percent": round(avg_mape, 4),
+            "hit_rate_percent": round(hit_rate, 2),
+            "signal_total": signal_total,
+            "signal_hits": signal_hits,
+        },
+        "weekly_metrics": weekly_metrics,
+        "confusion_matrix": {"tp": tp, "fp": fp, "tn": tn, "fn": fn},
+    }
+
+
+@app.get("/api/performance/{ticker}")
+def get_model_performance(ticker: str):
+    """Trả về dữ liệu hiệu suất mô hình: predicted vs actual, DA, MAPE, confusion matrix."""
+    ticker = _kiem_tra_ticker_hop_le(ticker)
+    try:
+        rows = _doc_toan_bo_lich_su_tin_cay(ticker)
+        if not rows:
+            raise HTTPException(status_code=404, detail="Chưa có dữ liệu lịch sử dự đoán cho mã này.")
+
+        perf = _tinh_performance_metrics(rows)
+
+        # Kèm ablation data cho model comparison
+        ablation_metrics = []
+        try:
+            ablation_df = _doc_ket_qua_ablation().copy()
+            ticker_df = ablation_df[ablation_df["ticker"].str.upper() == ticker].copy()
+            if not ticker_df.empty:
+                ticker_df["sort_order"] = ticker_df["model_name"].map(THU_TU_MO_HINH)
+                ticker_df = ticker_df.sort_values(by=["sort_order"]).reset_index(drop=True)
+                for _, row in ticker_df.iterrows():
+                    ablation_metrics.append({
+                        "model_name": row["model_name"],
+                        "model_label": TEN_HIEN_THI_MO_HINH.get(row["model_name"], row["model_name"]),
+                        "rmse": round(float(row["RMSE"]), 4),
+                        "mae": round(float(row["MAE"]), 4),
+                        "mape": round(float(row["MAPE"]), 4),
+                        "r2": round(float(row["R2"]), 4),
+                        "da": round(float(row["DA"]), 2),
+                        "is_default": row["model_name"] == "cnn_lstm_attention",
+                    })
+        except Exception:
+            pass
+
+        return {
+            "ticker": ticker,
+            "prediction_pairs": perf["prediction_pairs"],
+            "summary": perf["summary"],
+            "weekly_metrics": perf["weekly_metrics"],
+            "confusion_matrix": perf["confusion_matrix"],
+            "ablation_comparison": ablation_metrics,
+        }
+    except HTTPException:
+        raise
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=str(exc))
+
+
+@app.get("/api/signal-history/{ticker}")
+def get_signal_history(ticker: str, days: int = 90):
+    """Trả về lịch sử tín hiệu BUY/SELL/HOLD với kết quả thực tế."""
+    ticker = _kiem_tra_ticker_hop_le(ticker)
+    try:
+        rows = _doc_toan_bo_lich_su_tin_cay(ticker)
+        if not rows:
+            raise HTTPException(status_code=404, detail="Chưa có dữ liệu tín hiệu cho mã này.")
+
+        # Parse, sort, deduplicate by day
+        parsed = []
+        for row in rows:
+            dt = _parse_captured_at(row.get("captured_at", ""))
+            if dt is None:
+                continue
+            parsed.append({**row, "_dt": dt})
+        parsed.sort(key=lambda x: x["_dt"])
+
+        daily = {}
+        for entry in parsed:
+            day_key = entry["_dt"].strftime("%Y-%m-%d")
+            daily[day_key] = entry
+        sorted_days = sorted(daily.keys())
+
+        # Filter by number of days
+        cutoff = datetime.datetime.now() - datetime.timedelta(days=days)
+        filtered_days = [d for d in sorted_days if datetime.datetime.strptime(d, "%Y-%m-%d") >= cutoff]
+
+        signals = []
+        for i, day in enumerate(filtered_days):
+            entry = daily[day]
+            current = float(entry.get("current_price", 0))
+            predicted = float(entry.get("predicted_price_t1", 0))
+            recommendation = entry.get("recommendation", "")
+            confidence = float(entry.get("recommendation_confidence_score", 50))
+
+            # Tìm actual price từ ngày tiếp theo
+            day_idx = sorted_days.index(day)
+            actual = None
+            error_pct = None
+            result = None
+            if day_idx + 1 < len(sorted_days):
+                next_entry = daily[sorted_days[day_idx + 1]]
+                actual = float(next_entry.get("current_price", 0))
+                if actual > 0:
+                    error_pct = round(abs(predicted - actual) / actual * 100, 4)
+                    pred_dir = 1 if predicted >= current else -1
+                    actual_dir = 1 if actual >= current else -1
+                    result = "correct" if pred_dir == actual_dir else "incorrect"
+
+            signals.append({
+                "date": day,
+                "recommendation": recommendation,
+                "confidence_score": confidence,
+                "current_price": round(current, 2),
+                "predicted_price": round(predicted, 2),
+                "actual_price": round(actual, 2) if actual else None,
+                "error_percent": error_pct,
+                "result": result,
+            })
+
+        # Summary
+        evaluated = [s for s in signals if s["result"] is not None]
+        correct = sum(1 for s in evaluated if s["result"] == "correct")
+        win_rate = (correct / len(evaluated) * 100) if evaluated else 0
+
+        return {
+            "ticker": ticker,
+            "days": days,
+            "total_signals": len(signals),
+            "evaluated": len(evaluated),
+            "correct": correct,
+            "win_rate_percent": round(win_rate, 2),
+            "signals": list(reversed(signals)),  # Mới nhất trước
+        }
+    except HTTPException:
+        raise
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=str(exc))
