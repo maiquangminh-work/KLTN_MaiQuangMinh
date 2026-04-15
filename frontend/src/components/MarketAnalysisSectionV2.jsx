@@ -44,7 +44,7 @@ function MarketAnalysisSectionV2({
   return (
     <div className="detail-stack">
       <div className="detail-grid">
-        <div className="card" style={{ padding: '16px 18px' }}>
+        <div className="card" style={{ padding: '16px 18px', height: '100%' }}>
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '10px', flexWrap: 'wrap', marginBottom: '12px' }}>
             <h3 style={{ margin: 0 }}>LỚP BỐI CẢNH THỊ TRƯỜNG</h3>
             <span style={{ fontSize: '12px', color: '#848e9c' }}>{analysisSignalLabel}</span>
@@ -95,7 +95,7 @@ function MarketAnalysisSectionV2({
           )}
         </div>
 
-        <div className="card" style={{ padding: '16px 18px' }}>
+        <div className="card" style={{ padding: '16px 18px', height: '100%' }}>
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '10px', flexWrap: 'wrap', marginBottom: '12px' }}>
             <h3 style={{ margin: 0 }}>TRUNG TÂM CẢNH BÁO</h3>
             <span style={{ fontSize: '12px', color: '#848e9c' }}>Bản rút gọn để đọc nhanh</span>
@@ -103,12 +103,14 @@ function MarketAnalysisSectionV2({
           {loadingContext ? (
             <div style={{ color: '#fcd535' }}>Đang tổng hợp cảnh báo ngắn hạn...</div>
           ) : (
-            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '10px' }}>
+            <div style={{ display: 'grid', gap: '10px' }}>
               {alertItems.map((item) => (
-                <div key={item.label} style={{ background: '#161a1e', border: '1px solid #2b3139', borderRadius: '10px', padding: '12px' }}>
-                  <div style={{ color: '#848e9c', fontSize: '12px', marginBottom: '6px' }}>{item.label}</div>
-                  <div style={{ fontSize: '18px', fontWeight: 700, color: item.color, lineHeight: 1.35 }}>{item.value}</div>
-                  <div style={{ marginTop: '6px', color: '#94a3b8', fontSize: '12px', lineHeight: 1.55 }}>{item.note}</div>
+                <div key={item.label} style={{ background: '#161a1e', border: '1px solid #2b3139', borderRadius: '10px', padding: '12px 14px', display: 'grid', gridTemplateColumns: '1fr auto', gap: '10px', alignItems: 'center' }}>
+                  <div>
+                    <div style={{ color: '#848e9c', fontSize: '12px', marginBottom: '4px' }}>{item.label}</div>
+                    <div style={{ color: '#94a3b8', fontSize: '12px', lineHeight: 1.55 }}>{item.note}</div>
+                  </div>
+                  <div style={{ fontSize: '16px', fontWeight: 700, color: item.color, textAlign: 'right', lineHeight: 1.35 }}>{item.value}</div>
                 </div>
               ))}
             </div>

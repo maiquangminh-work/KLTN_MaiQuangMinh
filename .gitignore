@@ -1,24 +1,57 @@
-# --- Python & Môi trường ---
+﻿# =========================
+# Python / virtual env
+# =========================
 venv/
+.venv/
 __pycache__/
+*.py[cod]
+.pytest_cache/
+.mypy_cache/
+
+# =========================
+# Secrets / local config
+# =========================
 .env
+.env.*
+!.env.example
+*.pem
+*.key
 
-# --- Dữ liệu & Database ---
-*.csv
-*.db
-*.sqlite3
-data/
-
-# --- Mô hình AI (Trọng số & Scaler) ---
-*.h5
-*.pkl
-
-# --- Frontend (React/Node.js) ---
+# =========================
+# Frontend / Node
+# =========================
+frontend/node_modules/
+frontend/dist/
+frontend/build/
 node_modules/
 dist/
 build/
 .npm/
 
-# --- File rác hệ thống & Khác ---
-*.png
+# =========================
+# Logs / caches
+# =========================
+*.log
+logs/
+.cache/
+
+# =========================
+# Runtime data / generated artifacts
+# =========================
+data/raw/
+data/processed/
+data/confidence_logs/
+data/database/*.db
+notebooks/*.db
+models/ablation/
+models/*.h5
+models/*.pkl
+models/*plot*.png
+
+# =========================
+# IDE / OS files
+# =========================
 .DS_Store
+Thumbs.db
+.idea/
+.vscode/

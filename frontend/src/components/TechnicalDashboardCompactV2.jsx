@@ -4,7 +4,7 @@ function TechnicalDashboardCompactV2({
   predictedPrice,
   priceDiff,
   priceDiffPercent,
-  thresholdValue,
+  recommendationScore,
   formatVND,
   formatPercent,
   recColor,
@@ -17,6 +17,7 @@ function TechnicalDashboardCompactV2({
   contextAlignmentScore,
   getPositiveScoreColor,
   getConfidenceColor,
+  actionPlan,
 }) {
   return (
     <div className="panel-section">
@@ -49,7 +50,7 @@ function TechnicalDashboardCompactV2({
           </div>
           <div style={{ background: '#161a1e', border: '1px solid #2b3139', borderRadius: '10px', padding: '12px' }}>
             <div style={{ color: '#848e9c', fontSize: '12px', marginBottom: '5px' }}>Ngưỡng ra quyết định</div>
-            <div style={{ fontSize: '22px', fontWeight: 700, color: '#fcd535' }}>{formatPercent(thresholdValue * 100, 2)}</div>
+            <div style={{ fontSize: '22px', fontWeight: 700, color: recColor }}>{Math.round(recommendationScore)}/100</div>
             <div style={{ fontSize: '12px', color: '#848e9c', marginTop: '4px' }}>Dùng để phân loại Mua / Giữ / Bán</div>
           </div>
         </div>
@@ -83,6 +84,32 @@ function TechnicalDashboardCompactV2({
 
         <div style={{ marginTop: '10px', fontSize: '12px', color: '#94a3b8', lineHeight: 1.6 }}>
           {recommendationConfidenceNote}
+        </div>
+      </div>
+
+      <div className="card" style={{ padding: '15px 16px' }}>
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '10px', marginBottom: '10px', flexWrap: 'wrap' }}>
+          <h3 style={{ margin: 0 }}>NGƯỠNG HÀNH ĐỘNG TRONG NGÀY</h3>
+          <span style={{ fontSize: '12px', color: '#848e9c' }}>Khối đọc nhanh để quyết định</span>
+        </div>
+
+        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '10px' }}>
+          <div style={{ background: '#161a1e', border: '1px solid #2b3139', borderRadius: '10px', padding: '12px' }}>
+            <div style={{ color: '#848e9c', fontSize: '12px', marginBottom: '4px' }}>Vùng quan sát</div>
+            <div style={{ fontSize: '15px', fontWeight: 700, color: '#eaecef', lineHeight: 1.5 }}>{actionPlan.actionRange}</div>
+          </div>
+          <div style={{ background: '#161a1e', border: '1px solid #2b3139', borderRadius: '10px', padding: '12px' }}>
+            <div style={{ color: '#848e9c', fontSize: '12px', marginBottom: '4px' }}>Mốc bứt phá gần</div>
+            <div style={{ fontSize: '15px', fontWeight: 700, color: '#0ecb81', lineHeight: 1.5 }}>{actionPlan.targetLabel}</div>
+          </div>
+          <div style={{ background: '#161a1e', border: '1px solid #2b3139', borderRadius: '10px', padding: '12px' }}>
+            <div style={{ color: '#848e9c', fontSize: '12px', marginBottom: '4px' }}>Mốc phòng thủ</div>
+            <div style={{ fontSize: '15px', fontWeight: 700, color: '#f6465d', lineHeight: 1.5 }}>{actionPlan.guardrailLabel}</div>
+          </div>
+          <div style={{ background: '#161a1e', border: '1px solid #2b3139', borderRadius: '10px', padding: '12px' }}>
+            <div style={{ color: '#848e9c', fontSize: '12px', marginBottom: '4px' }}>Khung theo dõi</div>
+            <div style={{ fontSize: '15px', fontWeight: 700, color: '#fcd535', lineHeight: 1.5 }}>{actionPlan.horizonLabel}</div>
+          </div>
         </div>
       </div>
     </div>
