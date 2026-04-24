@@ -1,6 +1,5 @@
-from fastapi import FastAPI, HTTPException, Request, Query
+﻿from fastapi import FastAPI, HTTPException, Request, Query
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse
 import pandas as pd
 import numpy as np
 import pickle
@@ -9,7 +8,9 @@ import json
 import os
 import re
 import sys
+import threading
 from functools import lru_cache
+from config import SUPPORTED_TICKERS, TRAINED_TICKERS, BANK_NAMES, BANK_WEBSITES, BANK_LOGOS, NEWS_ALIASES, DEFAULT_FORECAST_STEPS
 from vnstock import Vnstock
 from tensorflow.keras.models import load_model
 import feedparser
@@ -19,6 +20,23 @@ from src.backend.database import SessionLocal, CompanyProfile
 
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), 'src/model')))
 from architecture import AttentionLayer
+from probability import (
+    DEFAULT_TICKERS as PROBABILITY_TICKERS,
+    FEATURE_COLUMNS,
+    BASE_FEATURE_COLUMNS,
+    apply_probability_calibrator,
+    probability_payload,
+    prepare_live_probability_frame,
+    build_peer_close_table,
+)
+# Import helpers augment features cho regression mode (đồng bộ với train.py)
+sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
+from src.model.train import (
+    _augment_regression_features,
+    _augment_cross_sectional_features,
+    load_ensemble_models,
+    predict_ensemble,
+)
 
 # Khởi tạo ứng dụng FastAPI
 app = FastAPI(title="AI Trading API", version="1.0")
@@ -32,38 +50,256 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+
+@app.on_event("startup")
+def _khoi_dong_dong_bo_du_lieu():
+    """Khi backend khởi động, tự kéo dữ liệu giá mới + tiền xử lý CSV chạy ngầm.
+
+    Pipeline: vnstock -> SQLite -> CSV processed (data/processed/*_features.csv).
+    API đọc CSV processed (FAST_DEMO_MODE), nên phải chạy đủ cả hai bước
+    thì biểu đồ mới hiển thị tới ngày hôm nay. Chạy trong daemon thread
+    để không chặn uvicorn startup; lỗi mạng không làm sập backend.
+    """
+    def _chay():
+        try:
+            from src.data_pipeline.auto_fetch import update_database, TICKERS
+            from src.data_pipeline.preprocess import process_ticker
+
+            update_database()
+            print("[startup] Bat dau tien xu ly CSV features...")
+            for t in TICKERS:
+                try:
+                    process_ticker(t)
+                except Exception as exc_t:
+                    print(f"[startup] Loi tien xu ly {t}: {exc_t}")
+
+            # Xoa cache in-memory de request ke tiep doc CSV moi
+            PREDICTION_CACHE.clear()
+            MARKET_CONTEXT_CACHE.clear()
+            print("[startup] Hoan tat dong bo du lieu va xoa cache.")
+        except Exception as exc:
+            print(f"[startup] Loi dong bo du lieu tu dong: {exc}")
+
+    threading.Thread(target=_chay, daemon=True, name="auto_fetch_startup").start()
+
+
 BASE_DIR = os.path.abspath(os.path.dirname(__file__))
 MODELS_DIR = os.path.join(BASE_DIR, "models")
-ABLATION_DIR = os.path.join(MODELS_DIR, "ablation")
-ABLATION_RESULTS_PATH = os.path.join(ABLATION_DIR, "ablation_results.csv")
 CONFIDENCE_LOG_DIR = os.path.join(BASE_DIR, "data", "confidence_logs")
+DATA_QUALITY_LOG_DIR = os.path.join(BASE_DIR, "data", "quality_logs")
 CONTEXT_CACHE_TTL_SECONDS = 300
 MARKET_CONTEXT_CACHE = {}
 COMPANY_PROFILE_CACHE_TTL_SECONDS = 43200
 COMPANY_PROFILE_CACHE = {}
 PREDICTION_CACHE_TTL_SECONDS = 180
 PREDICTION_CACHE = {}
+FOREIGN_OWNERSHIP_CACHE_TTL_SECONDS = 60
+FOREIGN_OWNERSHIP_CACHE = {}
+SSI_IBOARD_QUERY_BASE_URL = os.getenv("SSI_IBOARD_QUERY_BASE_URL", "https://iboard-query.ssi.com.vn")
 FAST_DEMO_MODE = os.getenv("FAST_DEMO_MODE", "1").strip().lower() in {"1", "true", "yes", "on"}
+PROFILE_EXTERNAL_PROVIDER_LABEL = "KBS Security"
+PROFILE_LIVE_BY_DEFAULT = os.getenv("PROFILE_LIVE_BY_DEFAULT", "0").strip().lower() in {"1", "true", "yes", "on"}
+VNSTOCK_RATE_LIMIT_COOLDOWN_SECONDS = int(os.getenv("VNSTOCK_RATE_LIMIT_COOLDOWN_SECONDS", "75"))
+VNSTOCK_QUOTA_WINDOW_SECONDS = int(os.getenv("VNSTOCK_QUOTA_WINDOW_SECONDS", "60"))
+VNSTOCK_QUOTA_SOFT_LIMIT = int(os.getenv("VNSTOCK_QUOTA_SOFT_LIMIT", "12"))
+VNSTOCK_CALL_TIMESTAMPS = []
+VNSTOCK_COOLDOWN_UNTIL = 0
+VNSTOCK_QUOTA_LOCK = threading.Lock()
+DATA_QUALITY_BLOCK_THRESHOLD = int(os.getenv("DATA_QUALITY_BLOCK_THRESHOLD", "45"))
 
-WEBSITE_NGAN_HANG_MAC_DINH = {
-    "VCB": "https://www.vietcombank.com.vn",
-    "BID": "https://bidv.com.vn",
-    "CTG": "https://www.vietinbank.vn",
+
+def _la_loi_gioi_han_api(exc):
+    message = str(exc or "").lower()
+    return any(
+        pattern in message
+        for pattern in [
+            "rate limit",
+            "maximum api request limit",
+            "max_val",
+            "quota",
+            "too many requests",
+            "wait to retry",
+        ]
+    )
+
+
+def _co_the_goi_vnstock_live():
+    global VNSTOCK_COOLDOWN_UNTIL
+    now_ts = time.time()
+    with VNSTOCK_QUOTA_LOCK:
+        if VNSTOCK_COOLDOWN_UNTIL > now_ts:
+            return False
+
+        cutoff_ts = now_ts - VNSTOCK_QUOTA_WINDOW_SECONDS
+        VNSTOCK_CALL_TIMESTAMPS[:] = [
+            timestamp for timestamp in VNSTOCK_CALL_TIMESTAMPS if timestamp >= cutoff_ts
+        ]
+        if len(VNSTOCK_CALL_TIMESTAMPS) >= VNSTOCK_QUOTA_SOFT_LIMIT:
+            VNSTOCK_COOLDOWN_UNTIL = now_ts + VNSTOCK_RATE_LIMIT_COOLDOWN_SECONDS
+            return False
+
+        VNSTOCK_CALL_TIMESTAMPS.append(now_ts)
+        return True
+
+
+def _danh_dau_vnstock_bi_gioi_han(exc):
+    global VNSTOCK_COOLDOWN_UNTIL
+    if not _la_loi_gioi_han_api(exc):
+        return
+
+    with VNSTOCK_QUOTA_LOCK:
+        VNSTOCK_COOLDOWN_UNTIL = max(
+            VNSTOCK_COOLDOWN_UNTIL,
+            time.time() + VNSTOCK_RATE_LIMIT_COOLDOWN_SECONDS,
+        )
+
+WEBSITE_NGAN_HANG_MAC_DINH = BANK_WEBSITES
+
+PROFILE_STATIC_FALLBACKS = {
+    "VCB": {
+        "charter_capital": "83,557 tỷ đồng",
+        "first_trading_date": "30/06/2009",
+        "first_price": "60.0",
+        "listed_shares": "5,589,091,262",
+        "outstanding_shares": "5,589,091,262",
+        "first_listed_shares": "112,285,426",
+        "charter_capital_history": [
+            {"quarter": "Q4/2023", "value": "55,890"},
+            {"quarter": "Q1/2024", "value": "55,890"},
+            {"quarter": "Q4/2024", "value": "55,890"},
+            {"quarter": "Q1/2025", "value": "83,557"},
+        ],
+    },
+    "BID": {
+        "charter_capital": "68,975 tỷ đồng",
+        "first_trading_date": "24/01/2014",
+        "first_price": "18.7",
+        "listed_shares": "6,897,471,230",
+        "outstanding_shares": "6,897,471,230",
+        "first_listed_shares": "2,811,202,644",
+        "charter_capital_history": [
+            {"quarter": "Q4/2023", "value": "50,585"},
+            {"quarter": "Q4/2024", "value": "57,004"},
+            {"quarter": "Q2/2025", "value": "68,975"},
+        ],
+    },
+    "CTG": {
+        "charter_capital": "77,670 tỷ đồng",
+        "first_trading_date": "16/07/2009",
+        "first_price": "50.0",
+        "listed_shares": "5,369,991,748",
+        "outstanding_shares": "5,369,991,748",
+        "first_listed_shares": "121,211,780",
+        "charter_capital_history": [
+            {"quarter": "Q4/2023", "value": "53,700"},
+            {"quarter": "Q4/2024", "value": "53,700"},
+            {"quarter": "Q4/2025", "value": "77,670"},
+        ],
+    },
+    "MBB": {
+        "charter_capital": "61,022 tỷ đồng",
+        "first_trading_date": "01/11/2011",
+        "first_price": "13.8",
+        "listed_shares": "6,102,293,744",
+        "outstanding_shares": "6,102,293,744",
+        "first_listed_shares": "100,000,000",
+        "charter_capital_history": [
+            {"quarter": "Q4/2023", "value": "45,340"},
+            {"quarter": "Q2/2024", "value": "52,141"},
+            {"quarter": "Q4/2024", "value": "61,022"},
+        ],
+    },
+    "TCB": {
+        "charter_capital": "70,648 tỷ đồng",
+        "first_trading_date": "04/06/2018",
+        "first_price": "128.0",
+        "listed_shares": "7,064,800,000",
+        "outstanding_shares": "7,064,800,000",
+        "first_listed_shares": "350,000,000",
+        "charter_capital_history": [
+            {"quarter": "Q4/2023", "value": "35,225"},
+            {"quarter": "Q3/2024", "value": "70,648"},
+            {"quarter": "Q4/2024", "value": "70,648"},
+        ],
+    },
+    "VPB": {
+        "charter_capital": "79,339 tỷ đồng",
+        "first_trading_date": "17/08/2017",
+        "first_price": "39.0",
+        "listed_shares": "7,933,923,601",
+        "outstanding_shares": "7,933,923,601",
+        "first_listed_shares": "1,330,000,000",
+        "charter_capital_history": [
+            {"quarter": "Q4/2023", "value": "67,434"},
+            {"quarter": "Q2/2024", "value": "79,339"},
+            {"quarter": "Q4/2024", "value": "79,339"},
+        ],
+    },
+    "ACB": {
+        "charter_capital": "44,667 tỷ đồng",
+        "first_trading_date": "31/10/2006",
+        "first_price": "52.0",
+        "listed_shares": "4,466,657,861",
+        "outstanding_shares": "4,466,657,861",
+        "first_listed_shares": "110,000,000",
+        "charter_capital_history": [
+            {"quarter": "Q4/2023", "value": "38,840"},
+            {"quarter": "Q2/2024", "value": "40,447"},
+            {"quarter": "Q4/2024", "value": "44,667"},
+        ],
+    },
+    "HDB": {
+        "charter_capital": "35,101 tỷ đồng",
+        "first_trading_date": "05/01/2018",
+        "first_price": "33.0",
+        "listed_shares": "3,510,127,518",
+        "outstanding_shares": "3,510,127,518",
+        "first_listed_shares": "98,100,000",
+        "charter_capital_history": [
+            {"quarter": "Q4/2023", "value": "29,276"},
+            {"quarter": "Q3/2024", "value": "33,647"},
+            {"quarter": "Q4/2024", "value": "35,101"},
+        ],
+    },
+    "SHB": {
+        "charter_capital": "40,658 tỷ đồng",
+        "first_trading_date": "20/04/2009",
+        "first_price": "30.0",
+        "listed_shares": "4,065,856,892",
+        "outstanding_shares": "4,065,856,892",
+        "first_listed_shares": "500,000,000",
+        "charter_capital_history": [
+            {"quarter": "Q4/2023", "value": "36,194"},
+            {"quarter": "Q4/2024", "value": "36,194"},
+            {"quarter": "Q2/2025", "value": "40,658"},
+        ],
+    },
+    "VIB": {
+        "charter_capital": "29,791 tỷ đồng",
+        "first_trading_date": "10/01/2017",
+        "first_price": "17.0",
+        "listed_shares": "2,979,134,706",
+        "outstanding_shares": "2,979,134,706",
+        "first_listed_shares": "188,500,000",
+        "charter_capital_history": [
+            {"quarter": "Q4/2023", "value": "25,368"},
+            {"quarter": "Q2/2024", "value": "27,398"},
+            {"quarter": "Q4/2024", "value": "29,791"},
+        ],
+    },
 }
 
 TU_VAN_NIEM_YET_MAC_DINH = {
-    "VCB": {
-        "name": "Công ty TNHH Chứng khoán Ngân hàng TMCP Ngoại thương Việt Nam",
-        "link": "https://vcbs.com.vn/",
-    },
-    "BID": {
-        "name": "Công ty CP Chứng khoán Ngân hàng Đầu tư và Phát triển Việt Nam",
-        "link": "https://www.bsc.com.vn/",
-    },
-    "CTG": {
-        "name": "Công ty Cổ phần Chứng khoán SSI",
-        "link": "https://www.ssi.com.vn",
-    },
+    "VCB": {"name": "Công ty TNHH Chứng khoán Ngân hàng TMCP Ngoại thương Việt Nam", "link": "https://vcbs.com.vn/"},
+    "BID": {"name": "Công ty CP Chứng khoán Ngân hàng Đầu tư và Phát triển Việt Nam", "link": "https://www.bsc.com.vn/"},
+    "CTG": {"name": "Công ty Cổ phần Chứng khoán SSI", "link": "https://www.ssi.com.vn"},
+    "MBB": {"name": "Công ty CP Chứng khoán MB", "link": "https://www.mbs.com.vn/"},
+    "TCB": {"name": "Công ty CP Chứng khoán Kỹ Thương", "link": "https://www.tcbs.com.vn/"},
+    "VPB": {"name": "Công ty CP Chứng khoán VPBank", "link": "https://www.vpbanks.com.vn/"},
+    "ACB": {"name": "Công ty CP Chứng khoán ACB", "link": "https://www.acbs.com.vn/"},
+    "HDB": {"name": "Công ty CP Chứng khoán HDBank", "link": "https://hdbs.com.vn/"},
+    "SHB": {"name": "Công ty CP Chứng khoán SHB", "link": "https://www.shbs.com.vn/"},
+    "VIB": {"name": "Công ty CP Chứng khoán KIS Việt Nam", "link": "https://www.kisvn.vn/"},
 }
 
 LICH_SU_KIEM_TOAN_MAC_DINH = {
@@ -91,46 +327,36 @@ LICH_SU_KIEM_TOAN_MAC_DINH = {
         {"year": "2018", "name": "Công ty TNHH Ernst & Young Việt Nam", "link": "https://www.ey.com/en_vn"},
         {"year": "2017", "name": "Công ty TNHH Ernst & Young Việt Nam", "link": "https://www.ey.com/en_vn"},
     ],
+    "MBB": [{"year": "2024", "name": "Công ty TNHH Ernst & Young Việt Nam", "link": "https://www.ey.com/en_vn"}],
+    "TCB": [{"year": "2024", "name": "Công ty TNHH KPMG Việt Nam", "link": "https://kpmg.com/vn/vi/home.html"}],
+    "VPB": [{"year": "2024", "name": "Công ty TNHH KPMG Việt Nam", "link": "https://kpmg.com/vn/vi/home.html"}],
+    "ACB": [{"year": "2024", "name": "Công ty TNHH Ernst & Young Việt Nam", "link": "https://www.ey.com/en_vn"}],
+    "HDB": [{"year": "2024", "name": "Công ty TNHH KPMG Việt Nam", "link": "https://kpmg.com/vn/vi/home.html"}],
+    "SHB": [{"year": "2024", "name": "Công ty TNHH Deloitte Việt Nam", "link": "https://www.deloitte.com/vn/en.html"}],
+    "VIB": [{"year": "2024", "name": "Công ty TNHH PwC Việt Nam", "link": "https://www.pwc.com/vn"}],
 }
 
-THU_TU_MO_HINH = {
-    "lstm_only": 0,
-    "cnn_only": 1,
-    "attention_only": 2,
-    "cnn_lstm": 3,
-    "lstm_attention": 4,
-    "cnn_attention": 5,
-    "cnn_lstm_attention": 6,
-}
-
-TEN_HIEN_THI_MO_HINH = {
-    "lstm_only": "LSTM",
-    "cnn_only": "CNN",
-    "attention_only": "Attention",
-    "cnn_lstm": "CNN-LSTM",
-    "lstm_attention": "LSTM-Attention",
-    "cnn_attention": "CNN-Attention",
-    "cnn_lstm_attention": "CNN-LSTM-Attention",
-}
-
-RSS_URLS = [
-    "https://cafef.vn/tai-chinh-ngan-hang.rss",
-    "https://cafef.vn/thi-truong-chung-khoan.rss",
-    "https://cafef.vn/doanh-nghiep.rss",
-    "https://vietstock.vn/rss/tai-chinh.rss",
-    "https://vietstock.vn/rss/chung-khoan.rss",
-    "https://vietstock.vn/rss/doanh-nghiep.rss",
-    "https://vnexpress.net/rss/kinh-doanh.rss",
-    "https://vnexpress.net/rss/kinh-doanh/chung-khoan.rss",
-    "https://baodautu.vn/ngan-hang.rss",
-    "https://baodautu.vn/tai-chinh-chung-khoan.rss",
+RSS_SOURCES = [
+    {"name": "CafeF", "url": "https://cafef.vn/tai-chinh-ngan-hang.rss"},
+    {"name": "CafeF", "url": "https://cafef.vn/thi-truong-chung-khoan.rss"},
+    {"name": "CafeF", "url": "https://cafef.vn/doanh-nghiep.rss"},
+    {"name": "Vietstock", "url": "https://vietstock.vn/rss/tai-chinh.rss"},
+    {"name": "Vietstock", "url": "https://vietstock.vn/rss/chung-khoan.rss"},
+    {"name": "Vietstock", "url": "https://vietstock.vn/rss/doanh-nghiep.rss"},
+    {"name": "VNExpress", "url": "https://vnexpress.net/rss/kinh-doanh.rss"},
+    {"name": "VNExpress", "url": "https://vnexpress.net/rss/kinh-doanh/chung-khoan.rss"},
+    {"name": "Báo Đầu Tư", "url": "https://baodautu.vn/ngan-hang.rss"},
+    {"name": "Báo Đầu Tư", "url": "https://baodautu.vn/tai-chinh-chung-khoan.rss"},
+    {"name": "VnEconomy", "url": "https://vneconomy.vn/rss/tai-chinh.rss"},
+    {"name": "VnEconomy", "url": "https://vneconomy.vn/rss/chung-khoan.rss"},
+    {"name": "VnBusiness", "url": "https://vnbusiness.vn/rss/ngan-hang.rss"},
+    {"name": "VnBusiness", "url": "https://vnbusiness.vn/rss/tai-chinh.rss"},
+    {"name": "VnBusiness", "url": "https://vnbusiness.vn/rss/chung-khoan.rss"},
 ]
+RSS_URLS = [source["url"] for source in RSS_SOURCES]
+RSS_SOURCE_BY_URL = {source["url"]: source["name"] for source in RSS_SOURCES}
 
-TU_KHOA_THEO_MA = {
-    "VCB": ["vcb", "vietcombank"],
-    "BID": ["bid", "bidv"],
-    "CTG": ["ctg", "vietinbank"],
-}
+TU_KHOA_THEO_MA = {k: v for k, v in NEWS_ALIASES.items()}
 
 TU_KHOA_CHUNG_TAI_CHINH = [
     "ngân hàng",
@@ -249,6 +475,34 @@ TU_KHOA_RIENG_THEO_MA = {
             "chi phí tín dụng": 2,
         },
     },
+    "MBB": {
+        "positive": {"mb ageas": 1, "bancassurance": 2, "số hóa": 2, "app mbbank": 1, "tín dụng bán lẻ": 2},
+        "negative": {"nợ xấu bán lẻ": 2, "chi phí hoạt động": 1, "cạnh tranh fintech": 2},
+    },
+    "TCB": {
+        "positive": {"masan": 1, "bất động sản cao cấp": 2, "zero fee": 2, "tcbs": 1, "casa cao": 2},
+        "negative": {"bất động sản giảm": 3, "trái phiếu doanh nghiệp": 2, "tập trung tín dụng": 2},
+    },
+    "VPB": {
+        "positive": {"fe credit": 2, "tín dụng tiêu dùng": 2, "smbc": 1, "fintech": 1, "cake digital": 1},
+        "negative": {"nợ xấu tín dụng tiêu dùng": 3, "fe credit nợ xấu": 3, "chi phí dự phòng": 2},
+    },
+    "ACB": {
+        "positive": {"bán lẻ": 2, "sme": 1, "chất lượng tài sản": 2, "casa tốt": 2, "nim ổn định": 1},
+        "negative": {"tăng trưởng chậm": 1, "áp lực cạnh tranh": 1},
+    },
+    "HDB": {
+        "positive": {"hd saison": 2, "tín dụng tiêu dùng": 1, "vietjet": 1, "bancassurance": 1},
+        "negative": {"nợ xấu hd saison": 2, "biên lãi mỏng": 1},
+    },
+    "SHB": {
+        "positive": {"xử lý nợ xấu": 2, "tăng vốn": 2, "shb finance": 1, "mở rộng mạng lưới": 1},
+        "negative": {"nợ xấu cao": 3, "car thấp": 2, "trích lập nặng": 2},
+    },
+    "VIB": {
+        "positive": {"bán lẻ": 2, "auto loan": 2, "commonwealth bank": 1, "nim cao": 2},
+        "negative": {"tập trung cho vay ô tô": 1, "biên lãi giảm": 2},
+    },
 }
 
 TU_KHOA_VI_MO_RUI_RO = {
@@ -296,20 +550,100 @@ TU_KHOA_CHINH_TRI_HA_NHIET = {
 
 def _kiem_tra_ticker_hop_le(ticker_name):
     ticker_name = ticker_name.upper()
-    if ticker_name not in ["VCB", "BID", "CTG"]:
-        raise HTTPException(status_code=404, detail="Mã ngân hàng không hợp lệ")
+    if ticker_name not in SUPPORTED_TICKERS:
+        raise HTTPException(status_code=404, detail=f"Mã {ticker_name} không được hỗ trợ. Danh sách: {', '.join(SUPPORTED_TICKERS)}")
     return ticker_name
 
 
+def _has_trained_model(ticker_name):
+    """Kiểm tra xem mã có mô hình AI đã huấn luyện hay chưa (hồi quy hoặc xác suất)."""
+    name = ticker_name.lower()
+    prob_bundle = (
+        os.path.join(MODELS_DIR, f'cnn_lstm_attn_{name}_prob_v1.h5'),
+        os.path.join(MODELS_DIR, f'{name}_prob_feature_scaler.pkl'),
+        os.path.join(MODELS_DIR, f'{name}_prob_config.pkl'),
+    )
+    reg_bundle = (
+        os.path.join(MODELS_DIR, f'cnn_lstm_attn_{name}_v1.h5'),
+        os.path.join(MODELS_DIR, f'{name}_feature_scaler.pkl'),
+        os.path.join(MODELS_DIR, f'{name}_target_scaler.pkl'),
+    )
+    return all(os.path.exists(path) for path in prob_bundle) or all(os.path.exists(path) for path in reg_bundle)
+
+
+# ---------------------------------------------------------------------------
+# Độ tin cậy MÔ HÌNH (tĩnh) - tách riêng khỏi confidence (động) để hiển thị
+# theo phong cách Bloomberg/FiinTrade: "model reliability" vs "signal strength".
+# Nguồn dữ liệu: models/probability_model_metrics.csv (kết quả backtest).
+# ---------------------------------------------------------------------------
+
 @lru_cache(maxsize=1)
-def _doc_ket_qua_ablation():
-    if not os.path.exists(ABLATION_RESULTS_PATH):
-        raise FileNotFoundError("Không tìm thấy file kết quả so sánh mô hình.")
-    return pd.read_csv(ABLATION_RESULTS_PATH)
+def _doc_bang_do_tin_cay_mo_hinh():
+    """Đọc bảng metrics backtest và tổng hợp điểm độ tin cậy mô hình theo mã."""
+    path = os.path.join(BASE_DIR, "models", "probability_model_metrics.csv")
+    if not os.path.exists(path):
+        return {}
+    try:
+        df = pd.read_csv(path)
+    except Exception as exc:
+        print(f"[reliability] Khong doc duoc {path}: {exc}")
+        return {}
+
+    table = {}
+    for _, row in df.iterrows():
+        ticker = str(row.get("ticker", "")).strip().upper()
+        if not ticker:
+            continue
+        try:
+            ece = float(row.get("ece", 0) or 0)
+            auc = float(row.get("roc_auc_ovr", 0.5) or 0.5)
+            macro_f1 = float(row.get("macro_f1", 0) or 0)
+            calibrated = bool(row.get("calibrated", False))
+        except Exception:
+            continue
+
+        calibration = max(0.0, min(1.0, 1.0 - ece))
+        discrimination = max(0.0, min(1.0, auc))
+        # 70% trọng số cho calibration (xác suất hiệu chỉnh đáng tin),
+        # 30% cho discrimination (khả năng phân biệt 3 lớp).
+        score = round(70.0 * calibration + 30.0 * discrimination)
+        score = max(40, min(95, int(score)))
+        if score >= 80:
+            label = "Cao"
+        elif score >= 65:
+            label = "Khá"
+        else:
+            label = "Trung bình"
+        table[ticker] = {
+            "score": score,
+            "label": label,
+            "calibration_score": int(round(calibration * 100)),
+            "discrimination_score": int(round(discrimination * 100)),
+            "macro_f1_score": int(round(macro_f1 * 100)),
+            "calibrated": calibrated,
+            "note": (
+                "Đo từ walk-forward backtest trên tập kiểm thử lịch sử. "
+                "Chỉ số tĩnh, phản ánh độ tin cậy của mô hình theo thời gian dài, "
+                "không thay đổi giữa các phiên giao dịch."
+            ),
+        }
+    return table
 
 
-def _tao_url_anh_ablation(ticker_name, image_key):
-    return f"/api/ablation/{ticker_name}/images/{image_key}"
+def _lay_do_tin_cay_mo_hinh(ticker):
+    """Trả về dict mô tả độ tin cậy MÔ HÌNH cho 1 mã (khác confidence động)."""
+    table = _doc_bang_do_tin_cay_mo_hinh()
+    if ticker.upper() in table:
+        return table[ticker.upper()]
+    return {
+        "score": 0,
+        "label": "Chưa đánh giá",
+        "calibration_score": 0,
+        "discrimination_score": 0,
+        "macro_f1_score": 0,
+        "calibrated": False,
+        "note": "Chưa có metric backtest cho mã này.",
+    }
 
 
 def _gioi_han_diem(value):
@@ -350,6 +684,163 @@ def _dinh_dang_so_luong(value):
         return f"{int(round(float(value))):,}"
     except Exception:
         return str(value)
+
+
+def _ep_so_float(value, default=None):
+    value = _lam_sach_gia_tri_profile(value)
+    if value is None:
+        return default
+    if isinstance(value, str):
+        cleaned = value.replace(",", "").strip()
+        if not cleaned:
+            return default
+        value = cleaned
+    try:
+        return float(value)
+    except Exception:
+        return default
+
+
+def _ep_so_int(value, default=0):
+    numeric_value = _ep_so_float(value, None)
+    if numeric_value is None:
+        return default
+    return int(round(numeric_value))
+
+
+def _dinh_dang_ngay_ssi(value):
+    cleaned_value = _lam_sach_gia_tri_profile(value)
+    if not cleaned_value:
+        return None
+    text_value = str(cleaned_value)
+    if re.fullmatch(r"\d{8}", text_value):
+        return f"{text_value[6:8]}/{text_value[4:6]}/{text_value[0:4]}"
+    return _dinh_dang_ngay(text_value)
+
+
+def _lay_int_dau_tien(row_data, keys):
+    for key in keys:
+        if key in row_data and _lam_sach_gia_tri_profile(row_data.get(key)) is not None:
+            return _ep_so_int(row_data.get(key), 0)
+    return None
+
+
+def _lay_float_dau_tien(row_data, keys):
+    for key in keys:
+        if key in row_data and _lam_sach_gia_tri_profile(row_data.get(key)) is not None:
+            return _ep_so_float(row_data.get(key), None)
+    return None
+
+
+def _lay_room_ngoai_tu_vnstock(ticker_name):
+    ticker_name = _kiem_tra_ticker_hop_le(ticker_name)
+
+    try:
+        stock = Vnstock().stock(symbol=ticker_name, source="VCI")
+        dataframe = _lay_dataframe_tu_company(stock.company, "trading_stats")
+        row_data = _dong_dataframe_dau_tien(dataframe)
+        if not row_data:
+            return None
+
+        remaining_volume = _lay_int_dau_tien(
+            row_data,
+            ["foreign_holding_room", "foreign_room_remaining", "remaining_foreign_room"],
+        )
+        total_room = _lay_int_dau_tien(
+            row_data,
+            ["foreign_room", "foreign_total_room", "foreign_total_room_volume"],
+        )
+        owned_volume = _lay_int_dau_tien(
+            row_data,
+            ["foreign_volume", "foreign_total_volume", "foreign_owned_volume"],
+        )
+        current_ratio = _lay_float_dau_tien(row_data, ["current_holding_ratio", "foreign_ownership_ratio"])
+        max_ratio = _lay_float_dau_tien(row_data, ["max_holding_ratio", "foreign_max_ratio"])
+
+        if all(value is None for value in [remaining_volume, total_room, owned_volume, current_ratio, max_ratio]):
+            return None
+
+        return {
+            "remaining_volume": remaining_volume,
+            "remaining_volume_display": _dinh_dang_so_luong(remaining_volume),
+            "total_room_volume": total_room,
+            "total_room_volume_display": _dinh_dang_so_luong(total_room),
+            "foreign_owned_volume": owned_volume,
+            "foreign_owned_volume_display": _dinh_dang_so_luong(owned_volume),
+            "current_holding_ratio": current_ratio,
+            "max_holding_ratio": max_ratio,
+            "source": "vnstock VCI",
+        }
+    except Exception as exc:
+        _danh_dau_vnstock_bi_gioi_han(exc)
+        return None
+
+
+def _lay_room_va_dtnn_tu_ssi_iboard(ticker_name):
+    ticker_name = _kiem_tra_ticker_hop_le(ticker_name)
+    url = f"{SSI_IBOARD_QUERY_BASE_URL.rstrip('/')}/stock/{ticker_name}"
+    response = requests.get(
+        url,
+        headers={
+            "Accept": "application/json",
+            "User-Agent": "MinSightBankingAI/1.0",
+        },
+        timeout=6,
+    )
+    response.raise_for_status()
+    payload = response.json()
+    row = payload.get("data") if isinstance(payload, dict) else None
+    if not isinstance(row, dict) or not row:
+        return None
+
+    buy_volume = _ep_so_int(row.get("buyForeignQtty"), 0)
+    sell_volume = _ep_so_int(row.get("sellForeignQtty"), 0)
+    buy_value = _ep_so_int(row.get("buyForeignValue"), 0)
+    sell_value = _ep_so_int(row.get("sellForeignValue"), 0)
+    has_ssi_room = _lam_sach_gia_tri_profile(row.get("remainForeignQtty")) is not None
+    remaining_room = _ep_so_int(row.get("remainForeignQtty"), 0)
+    fallback_room = None if has_ssi_room else _lay_room_ngoai_tu_vnstock(ticker_name)
+    if fallback_room and fallback_room.get("remaining_volume") is not None:
+        remaining_room = fallback_room["remaining_volume"]
+    trading_date = _dinh_dang_ngay_ssi(row.get("tradingDate"))
+
+    foreign_room = {
+        "remaining_volume": remaining_room,
+        "remaining_volume_display": _dinh_dang_so_luong(remaining_room),
+        "trading_date": trading_date,
+        "source": "SSI iBoard" if has_ssi_room else fallback_room.get("source", "SSI iBoard"),
+    }
+    if fallback_room:
+        for key in ["total_room_volume", "total_room_volume_display", "foreign_owned_volume", "foreign_owned_volume_display", "current_holding_ratio", "max_holding_ratio"]:
+            if fallback_room.get(key) is not None:
+                foreign_room[key] = fallback_room[key]
+
+    return {
+        "ticker": ticker_name,
+        "source": "SSI iBoard" if not fallback_room else f"SSI iBoard + {fallback_room['source']}",
+        "source_url": f"https://iboard.ssi.com.vn/stock/{ticker_name}",
+        "updated_at": datetime.datetime.now().strftime("%d/%m/%Y %H:%M"),
+        "trading_date": trading_date,
+        "exchange": str(row.get("exchange") or "").upper() or None,
+        "foreign_room": foreign_room,
+        "foreign_trading_today": {
+            "foreign_buy_volume": buy_volume,
+            "foreign_sell_volume": sell_volume,
+            "foreign_net_volume": buy_volume - sell_volume,
+            "foreign_buy_value": buy_value,
+            "foreign_sell_value": sell_value,
+            "foreign_net_value": buy_value - sell_value,
+            "foreign_ownership_ratio": _ep_so_float(row.get("foreignerPercentage"), None),
+            "trading_date": trading_date,
+            "source": "SSI iBoard",
+        },
+        "raw": {
+            "matched_price": row.get("matchedPrice"),
+            "price_change": row.get("priceChange"),
+            "price_change_percent": row.get("priceChangePercent"),
+            "room_fallback_source": fallback_room.get("source") if fallback_room else None,
+        },
+    }
 
 
 def _dinh_dang_von_dieu_le(value):
@@ -502,12 +993,18 @@ def _cat_mo_ta(text, max_length=700):
 def _lay_dataframe_tu_company(company_component, method_name, **kwargs):
     if not hasattr(company_component, method_name):
         return pd.DataFrame()
+    if not _co_the_goi_vnstock_live():
+        return pd.DataFrame()
 
     try:
         dataframe = getattr(company_component, method_name)(**kwargs)
         if isinstance(dataframe, pd.DataFrame):
             return dataframe
-    except Exception:
+    except SystemExit as exc:
+        _danh_dau_vnstock_bi_gioi_han(exc)
+        return pd.DataFrame()
+    except Exception as exc:
+        _danh_dau_vnstock_bi_gioi_han(exc)
         return pd.DataFrame()
 
     return pd.DataFrame()
@@ -726,18 +1223,19 @@ def _luu_profile_vao_sqlite(profile_data):
 
 
 def _tao_profile_mac_dinh(ticker_name):
+    static_profile = PROFILE_STATIC_FALLBACKS.get(ticker_name, {})
     return {
         "ticker": ticker_name,
-        "company_name": ticker_name,
-        "industry": "Ngân hàng",
-        "exchange": "HOSE",
-        "charter_capital": None,
-        "first_trading_date": None,
-        "first_price": None,
-        "listed_shares": None,
-        "outstanding_shares": None,
-        "first_listed_shares": None,
-        "logo_url": None,
+        "company_name": BANK_NAMES.get(ticker_name, ticker_name),
+        "industry": "Ngân hàng thương mại",
+        "exchange": static_profile.get("exchange", "HOSE"),
+        "charter_capital": static_profile.get("charter_capital"),
+        "first_trading_date": static_profile.get("first_trading_date"),
+        "first_price": static_profile.get("first_price"),
+        "listed_shares": static_profile.get("listed_shares"),
+        "outstanding_shares": static_profile.get("outstanding_shares"),
+        "first_listed_shares": static_profile.get("first_listed_shares"),
+        "logo_url": BANK_LOGOS.get(ticker_name),
         "website": WEBSITE_NGAN_HANG_MAC_DINH.get(ticker_name),
         "address": None,
         "phone": None,
@@ -749,7 +1247,7 @@ def _tao_profile_mac_dinh(ticker_name):
         "major_shareholders": [],
         "listing_advisor": _lay_tu_van_niem_yet_mac_dinh(ticker_name),
         "auditor_timeline": _hop_nhat_lich_su_kiem_toan(ticker_name, None),
-        "charter_capital_history": [],
+        "charter_capital_history": static_profile.get("charter_capital_history", []),
     }
 
 
@@ -808,6 +1306,7 @@ def _chuyen_profile_ve_schema_giao_dien(ticker_name, source_name, crawled_payloa
             ),
             "charter_capital_history": crawled_payload.get("charter_capital_history", []) or fallback_profile.get("charter_capital_history", []),
             "profile_source": source_name,
+            "profile_provider": source_name,
             "profile_updated_at": datetime.datetime.now().strftime("%d/%m/%Y %H:%M"),
             "profile_status": "live",
         }
@@ -817,7 +1316,7 @@ def _chuyen_profile_ve_schema_giao_dien(ticker_name, source_name, crawled_payloa
 
 def _crawl_profile_tu_vnstock(ticker_name):
     crawl_sources = [
-        ("KBS", "KBS / KB Securities"),
+        ("KBS", PROFILE_EXTERNAL_PROVIDER_LABEL),
         ("VCI", "VCI / Vietcap"),
     ]
 
@@ -839,7 +1338,11 @@ def _crawl_profile_tu_vnstock(ticker_name):
                     "major_shareholders": shareholders,
                     "charter_capital_history": capital_history,
                 }, None
+        except SystemExit as exc:
+            _danh_dau_vnstock_bi_gioi_han(exc)
+            last_error = str(exc)
         except Exception as exc:
+            _danh_dau_vnstock_bi_gioi_han(exc)
             last_error = str(exc)
 
     return None, None, last_error
@@ -861,16 +1364,18 @@ def _lay_profile_cached(ticker_name, force_refresh=False):
     sqlite_profile = _doc_profile_tu_sqlite(ticker_name)
     if sqlite_profile:
         fallback_profile.update(sqlite_profile)
+    fallback_profile["logo_url"] = BANK_LOGOS.get(ticker_name) or fallback_profile.get("logo_url")
     fallback_profile["website"] = fallback_profile.get("website") or WEBSITE_NGAN_HANG_MAC_DINH.get(ticker_name)
 
-    if FAST_DEMO_MODE and not force_refresh:
+    if (FAST_DEMO_MODE or not PROFILE_LIVE_BY_DEFAULT) and not force_refresh:
         profile_data = dict(fallback_profile)
         profile_data.update(
             {
-                "profile_source": "Dá»¯ liá»‡u ná»™i bá»™ (demo)",
+                "profile_source": PROFILE_EXTERNAL_PROVIDER_LABEL,
+                "profile_provider": PROFILE_EXTERNAL_PROVIDER_LABEL,
                 "profile_updated_at": datetime.datetime.now().strftime("%d/%m/%Y %H:%M"),
                 "profile_status": "fallback",
-                "crawl_note": "Há»‡ thá»‘ng Ä‘ang cháº¡y á»Ÿ cháº¿ Ä‘á»™ demo nÃªn Æ°u tiÃªn hiá»ƒn thá»‹ dá»¯ liá»‡u ná»™i bá»™ Ä‘á»ƒ giá»¯ tá»‘c Ä‘á»™ vÃ  Ä‘á»™ á»•n Ä‘á»‹nh.",
+                "crawl_note": "Hồ sơ đang sử dụng thông tin tham chiếu đã xác thực để giữ trải nghiệm ổn định.",
             }
         )
         COMPANY_PROFILE_CACHE[ticker_name] = {
@@ -879,7 +1384,12 @@ def _lay_profile_cached(ticker_name, force_refresh=False):
         }
         return profile_data
 
-    source_label, crawled_payload, crawl_error = _crawl_profile_tu_vnstock(ticker_name)
+    if not _co_the_goi_vnstock_live():
+        crawled_payload = None
+        source_label = None
+        crawl_error = "Đang tạm dừng gọi API ngoài do gần chạm giới hạn."
+    else:
+        source_label, crawled_payload, crawl_error = _crawl_profile_tu_vnstock(ticker_name)
 
     if crawled_payload:
         profile_data = _chuyen_profile_ve_schema_giao_dien(
@@ -893,10 +1403,11 @@ def _lay_profile_cached(ticker_name, force_refresh=False):
         profile_data = dict(fallback_profile)
         profile_data.update(
             {
-                "profile_source": "Dữ liệu dự phòng nội bộ",
+                "profile_source": PROFILE_EXTERNAL_PROVIDER_LABEL,
+                "profile_provider": PROFILE_EXTERNAL_PROVIDER_LABEL,
                 "profile_updated_at": datetime.datetime.now().strftime("%d/%m/%Y %H:%M"),
                 "profile_status": "fallback",
-                "crawl_note": "Không thể cập nhật hồ sơ trực tuyến ở thời điểm hiện tại, hệ thống đang dùng dữ liệu dự phòng.",
+                "crawl_note": "Hồ sơ đang sử dụng thông tin tham chiếu đã xác thực để giữ trải nghiệm ổn định.",
             }
         )
         if crawl_error:
@@ -916,13 +1427,21 @@ def _lam_sach_van_ban(raw_text):
 
 
 def _lay_nguon_tin(url):
+    if url in RSS_SOURCE_BY_URL:
+        return RSS_SOURCE_BY_URL[url]
     if "cafef" in url:
         return "CafeF"
     if "vietstock" in url:
         return "Vietstock"
     if "vnexpress" in url:
         return "VNExpress"
-    return "Báo Đầu Tư"
+    if "baodautu" in url:
+        return "Báo Đầu Tư"
+    if "vneconomy" in url:
+        return "VnEconomy"
+    if "vnbusiness" in url:
+        return "VnBusiness"
+    return "Nguồn khác"
 
 
 def _dem_trong_so(text, keyword_weights):
@@ -996,7 +1515,7 @@ def _lay_boi_canh_cached(ticker_name):
 
     if FAST_DEMO_MODE:
         context_data = _tao_boi_canh_mac_dinh(ticker_name)
-        context_data["top_signals"] = ["Cháº¿ Ä‘á»™ demo: Æ°u tiÃªn tá»‘c Ä‘á»™ vÃ  Ä‘á»™ á»•n Ä‘á»‹nh, bá»‘i cáº£nh Ä‘ang dÃ¹ng dá»¯ liá»‡u an toÃ n."]
+        context_data["top_signals"] = ["Chế độ demo: ưu tiên tốc độ và độ ổn định, bối cảnh đang dùng dữ liệu an toàn."]
         MARKET_CONTEXT_CACHE[ticker_name] = {
             "timestamp": now_ts,
             "data": context_data,
@@ -1015,11 +1534,11 @@ def _doc_du_lieu_local_processed(ticker_name):
     ticker_name = _kiem_tra_ticker_hop_le(ticker_name)
     csv_path = os.path.join(BASE_DIR, "data", "processed", f"{ticker_name}_features.csv")
     if not os.path.exists(csv_path):
-        raise FileNotFoundError(f"KhÃ´ng tÃ¬m tháº¥y dá»¯ liá»‡u local cho {ticker_name}.")
+        raise FileNotFoundError(f"Không tìm thấy dữ liệu local cho {ticker_name}.")
 
     df = pd.read_csv(csv_path)
     if "time" not in df.columns:
-        raise ValueError(f"Dá»¯ liá»‡u local cho {ticker_name} thiáº¿u cá»™t time.")
+        raise ValueError(f"Dữ liệu local cho {ticker_name} thiếu cột time.")
 
     df["time"] = pd.to_datetime(df["time"])
     df = df.sort_values(by="time").reset_index(drop=True)
@@ -1043,7 +1562,7 @@ def _doc_du_lieu_local_processed(ticker_name):
 def _tinh_khuyen_nghi_va_do_tin_cay(current_price, predicted_price, threshold, market_context):
     current_price = float(current_price or 0)
     predicted_price = float(predicted_price or 0)
-    threshold = float(threshold or 0.0004)
+    threshold = float(threshold or 0.008)
     market_context = market_context or _tao_boi_canh_mac_dinh("VCB")
 
     price_diff = predicted_price - current_price
@@ -1106,7 +1625,7 @@ def _tinh_khuyen_nghi_va_do_tin_cay(current_price, predicted_price, threshold, m
     elif confidence_score >= 55:
         confidence_label = "Trung bình"
     else:
-        confidence_label = "Thấp"
+        confidence_label = "Quan sát"
 
     confidence_note = "Độ tự tin đang được tính từ độ mạnh của tín hiệu giá và mức đồng thuận của bối cảnh thị trường."
     if price_signal_score >= 75 and context_alignment_score >= 65:
@@ -1129,6 +1648,104 @@ def _tinh_khuyen_nghi_va_do_tin_cay(current_price, predicted_price, threshold, m
         "price_signal_score": round(price_signal_score, 2),
         "context_alignment_score": round(context_alignment_score, 2),
         "directional_bias": directional_bias,
+    }
+
+
+def _tinh_khuyen_nghi_xac_suat(probability_forecast, market_context):
+    market_context = market_context or _tao_boi_canh_mac_dinh("VCB")
+    probs = probability_forecast.get("probabilities", {})
+    p_out = float(probs.get("outperform", probability_forecast.get("outperform_probability", 0.0)) or 0.0)
+    p_neutral = float(probs.get("neutral", probability_forecast.get("neutral_probability", 0.0)) or 0.0)
+    p_under = float(probs.get("underperform", probability_forecast.get("underperform_probability", 0.0)) or 0.0)
+    probability_edge = p_out - p_under
+    max_probability = max(p_out, p_neutral, p_under)
+    is_calibrated = bool(probability_forecast.get("calibrated", False))
+    confidence_gate = probability_forecast.get("confidence_gate", {}) or {}
+    min_action_probability = float(confidence_gate.get("min_action_probability", 0.45) or 0.45)
+    min_probability_edge = float(confidence_gate.get("min_probability_edge", 0.12) or 0.12)
+
+    market_pressure_score = float(market_context.get("overall_market_pressure", 50.0))
+    banking_support_score = float(market_context.get("banking_sector_score", 50.0))
+
+    positive_context_score = ((100.0 - market_pressure_score) * 0.55) + (banking_support_score * 0.45)
+    negative_context_score = (market_pressure_score * 0.7) + ((100.0 - banking_support_score) * 0.3)
+    neutral_context_score = 100.0 - (abs(market_pressure_score - 50.0) * 1.15) - (abs(banking_support_score - 50.0) * 0.85)
+
+    if probability_edge >= min_probability_edge and p_out >= min_action_probability:
+        directional_bias = "positive"
+        price_signal_score = 50.0 + min(45.0, abs(probability_edge) * 90.0 + max(0.0, p_out - 0.34) * 45.0)
+        context_alignment_score = positive_context_score
+    elif probability_edge <= -min_probability_edge and p_under >= min_action_probability:
+        directional_bias = "negative"
+        price_signal_score = 50.0 + min(45.0, abs(probability_edge) * 90.0 + max(0.0, p_under - 0.34) * 45.0)
+        context_alignment_score = negative_context_score
+    else:
+        directional_bias = "neutral"
+        price_signal_score = 55.0 + min(20.0, p_neutral * 25.0) - min(15.0, abs(probability_edge) * 50.0)
+        context_alignment_score = neutral_context_score
+
+    price_signal_score = _gioi_han_diem(price_signal_score)
+    context_alignment_score = _gioi_han_diem(context_alignment_score)
+    recommendation_score = int(round((price_signal_score * 0.65) + (context_alignment_score * 0.35)))
+    strong_signal = directional_bias in ("positive", "negative")
+    if strong_signal:
+        confidence_score = 52.0 + (max_probability - min_action_probability) * 80.0 + abs(probability_edge) * 75.0
+        confidence_score += 5.0 if is_calibrated else 0.0
+    else:
+        confidence_score = min(54.0, 25.0 + max_probability * 40.0 + abs(probability_edge) * 30.0)
+    confidence_score = int(round(_gioi_han_diem(confidence_score)))
+
+    recommendation = "TRUNG LẬP"
+    recommendation_color = "#fcd535"
+    recommendation_note = (
+        f"Mô hình xác suất 5 phiên chưa tạo lợi thế đủ rõ sau bước hiệu chỉnh xác suất. "
+        f"P(outperform)={p_out:.1%}, P(underperform)={p_under:.1%}."
+    )
+
+    if directional_bias == "positive" and recommendation_score >= 62:
+        recommendation = "KHẢ QUAN"
+        recommendation_color = "#0ecb81"
+        recommendation_note = (
+            f"Mô hình nghiêng về khả năng outperform peer group trong 5 phiên tới "
+            f"với xác suất {p_out:.1%}; bối cảnh được dùng để hiệu chỉnh độ tin cậy."
+        )
+    elif directional_bias == "negative" and recommendation_score >= 62:
+        recommendation = "KÉM KHẢ QUAN"
+        recommendation_color = "#f6465d"
+        recommendation_note = (
+            f"Mô hình nghiêng về khả năng underperform peer group trong 5 phiên tới "
+            f"với xác suất {p_under:.1%}; nên ưu tiên đọc theo hướng phòng thủ."
+        )
+
+    if confidence_score >= 75:
+        confidence_label = "Cao"
+    elif confidence_score >= 55:
+        confidence_label = "Trung bình"
+    else:
+        confidence_label = "Quan sát"
+
+    confidence_note = (
+        "Cường độ tín hiệu phiên này được tính từ xác suất đã hiệu chỉnh, độ chênh giữa kịch bản "
+        "outperform và underperform; nhãn 'Quan sát' nghĩa là mô hình chưa thấy lợi thế đủ rõ "
+        "để khuyến nghị BUY/SELL — phù hợp đứng ngoài chờ tín hiệu mạnh hơn."
+    )
+
+    return {
+        "recommendation": recommendation,
+        "recommendation_color": recommendation_color,
+        "recommendation_note": recommendation_note,
+        "recommendation_confidence_score": confidence_score,
+        "recommendation_confidence_label": confidence_label,
+        "recommendation_confidence_note": confidence_note,
+        "recommendation_score": recommendation_score,
+        "price_signal_score": round(price_signal_score, 2),
+        "context_alignment_score": round(context_alignment_score, 2),
+        "directional_bias": directional_bias,
+        "abstain_zone": {
+            "active": directional_bias == "neutral",
+            "min_action_probability": min_action_probability,
+            "min_probability_edge": min_probability_edge,
+        },
     }
 
 
@@ -1156,6 +1773,13 @@ def _doc_lich_su_tin_cay(ticker_name, limit=20):
                 continue
 
     return rows[-limit:]
+
+
+def _luu_lich_su_chat_luong_du_lieu(ticker_name, snapshot):
+    os.makedirs(DATA_QUALITY_LOG_DIR, exist_ok=True)
+    file_path = os.path.join(DATA_QUALITY_LOG_DIR, f"{ticker_name.lower()}_data_quality_history.jsonl")
+    with open(file_path, "a", encoding="utf-8") as file_obj:
+        file_obj.write(json.dumps(snapshot, ensure_ascii=False) + "\n")
 
 
 def _thu_thap_tin_tuc_phuc_vu_boi_canh(ticker_name=None, limit=30):
@@ -1351,24 +1975,68 @@ def _phan_tich_boi_canh_thi_truong(ticker_name):
 
 def fetch_live_data(ticker_name):
     if FAST_DEMO_MODE:
-        return _doc_du_lieu_local_processed(ticker_name)
+        df = _doc_du_lieu_local_processed(ticker_name)
+        df.attrs["data_source"] = "local_processed_fast_demo"
+        return df
 
     today = datetime.datetime.today().strftime('%Y-%m-%d')
     try:
-        stock = Vnstock().stock(symbol=ticker_name, source='DNSE')
+        if not _co_the_goi_vnstock_live():
+            df = _doc_du_lieu_local_processed(ticker_name)
+            df.attrs["data_source"] = "local_processed_rate_limit"
+            return df
+        stock = Vnstock().stock(symbol=ticker_name, source='KBS')
         df = stock.quote.history(start="2015-01-01", end=today)
-    except Exception:
+        live_source = "vnstock_kbs"
+    except SystemExit as exc:
+        _danh_dau_vnstock_bi_gioi_han(exc)
+        df = _doc_du_lieu_local_processed(ticker_name)
+        df.attrs["data_source"] = "local_processed_kbs_system_exit"
+        return df
+    except Exception as exc:
+        if _la_loi_gioi_han_api(exc):
+            _danh_dau_vnstock_bi_gioi_han(exc)
+            df = _doc_du_lieu_local_processed(ticker_name)
+            df.attrs["data_source"] = "local_processed_kbs_rate_limit"
+            return df
         try:
+            if not _co_the_goi_vnstock_live():
+                df = _doc_du_lieu_local_processed(ticker_name)
+                df.attrs["data_source"] = "local_processed_vci_quota_guard"
+                return df
             stock = Vnstock().stock(symbol=ticker_name, source='VCI')
             df = stock.quote.history(start="2015-01-01", end=today)
-        except Exception:
-            return _doc_du_lieu_local_processed(ticker_name)
+            live_source = "vnstock_vci"
+        except SystemExit as exc:
+            _danh_dau_vnstock_bi_gioi_han(exc)
+            df = _doc_du_lieu_local_processed(ticker_name)
+            df.attrs["data_source"] = "local_processed_vci_system_exit"
+            return df
+        except Exception as exc:
+            _danh_dau_vnstock_bi_gioi_han(exc)
+            df = _doc_du_lieu_local_processed(ticker_name)
+            df.attrs["data_source"] = "local_processed_vci_error"
+            return df
         
     df['time'] = pd.to_datetime(df['time'])
     df = df.sort_values(by='time').reset_index(drop=True)
     
     # Auto-Scaling
-    fallback_df = pd.read_csv(f'data/processed/{ticker_name}_features.csv')
+    fallback_path = f'data/processed/{ticker_name}_features.csv'
+    if not os.path.exists(fallback_path):
+        # Mã mới chưa có CSV → bỏ qua auto-scaling, tính features trực tiếp
+        df['close'] = df['close'].interpolate(method='linear')
+        df['volume'] = df['volume'].interpolate(method='linear')
+        df['close_winsorized'] = np.clip(df['close'], df['close'].quantile(0.01), df['close'].quantile(0.99))
+        df['sma_10'] = df['close_winsorized'].rolling(window=10).mean()
+        df['sma_20'] = df['close_winsorized'].rolling(window=20).mean()
+        delta = df['close_winsorized'].diff()
+        rs = (delta.where(delta > 0, 0)).rolling(window=14).mean() / (-delta.where(delta < 0, 0)).rolling(window=14).mean()
+        df['rsi_14'] = 100 - (100 / (1 + rs))
+        cleaned_df = df.dropna().reset_index(drop=True)
+        cleaned_df.attrs["data_source"] = live_source
+        return cleaned_df
+    fallback_df = pd.read_csv(fallback_path)
     csv_price_max = fallback_df['close'].max()
     csv_vol_mean = fallback_df['volume'].mean()
     
@@ -1389,16 +2057,159 @@ def fetch_live_data(ticker_name):
     delta = df['close_winsorized'].diff()
     rs = (delta.where(delta > 0, 0)).rolling(window=14).mean() / (-delta.where(delta < 0, 0)).rolling(window=14).mean()
     df['rsi_14'] = 100 - (100 / (1 + rs))
-    return df.dropna().reset_index(drop=True)
+    cleaned_df = df.dropna().reset_index(drop=True)
+    cleaned_df.attrs["data_source"] = live_source
+    return cleaned_df
+
+
+def _danh_gia_chat_luong_du_lieu(df):
+    if df is None or df.empty:
+        return {
+            "score": 0,
+            "label": "Rất thấp",
+            "issues": ["Không có dữ liệu để dự báo."],
+            "source": "unknown",
+        }
+
+    issues = []
+    score = 100.0
+    required = ["open", "high", "low", "close_winsorized", "volume", "rsi_14"]
+    missing_ratio = float(df[required].isna().mean().mean()) if all(col in df.columns for col in required) else 1.0
+    if missing_ratio > 0:
+        penalty = min(25.0, missing_ratio * 100.0)
+        score -= penalty
+        issues.append(f"Tỷ lệ thiếu dữ liệu khoảng {missing_ratio:.1%}.")
+
+    if len(df) < 120:
+        score -= 25.0
+        issues.append("Số phiên dữ liệu ít, dễ làm mô hình kém ổn định.")
+    elif len(df) < 260:
+        score -= 10.0
+        issues.append("Số phiên dữ liệu trung bình, nên theo dõi thêm.")
+
+    close_series = pd.to_numeric(df.get("close_winsorized"), errors="coerce")
+    volume_series = pd.to_numeric(df.get("volume"), errors="coerce")
+    returns = close_series.pct_change()
+    extreme_return_ratio = float((returns.abs() > 0.15).mean()) if len(returns) else 0.0
+    if extreme_return_ratio > 0.02:
+        score -= 20.0
+        issues.append("Biến động giá bất thường cao, nghi ngờ dữ liệu nhiễu hoặc split chưa chuẩn.")
+
+    non_positive_volume_ratio = float((volume_series <= 0).mean()) if len(volume_series) else 1.0
+    if non_positive_volume_ratio > 0.01:
+        score -= 15.0
+        issues.append("Có phiên khối lượng <= 0, cần kiểm tra nguồn dữ liệu.")
+
+    score = int(round(_gioi_han_diem(score)))
+    if score >= 85:
+        label = "Cao"
+    elif score >= 65:
+        label = "Trung bình"
+    elif score >= 45:
+        label = "Thấp"
+    else:
+        label = "Rất thấp"
+
+    return {
+        "score": score,
+        "label": label,
+        "issues": issues,
+        "source": df.attrs.get("data_source", "unknown"),
+    }
+
+
+def _giam_cap_khuyen_nghi_neu_du_lieu_kem(recommendation_bundle, data_quality):
+    if not recommendation_bundle:
+        return recommendation_bundle
+    quality_score = int(data_quality.get("score", 0))
+    adjusted = dict(recommendation_bundle)
+    if quality_score < DATA_QUALITY_BLOCK_THRESHOLD:
+        adjusted["recommendation"] = "TRUNG LẬP"
+        adjusted["recommendation_color"] = "#848e9c"
+        adjusted["recommendation_confidence_label"] = "Thấp"
+        adjusted["recommendation_confidence_score"] = min(
+            int(adjusted.get("recommendation_confidence_score", 0)),
+            35,
+        )
+        reason = "Dữ liệu đầu vào chất lượng thấp nên hệ thống hạ mức khuyến nghị về trung lập."
+        adjusted["recommendation_note"] = reason
+        adjusted["recommendation_confidence_note"] = reason
+        adjusted["blocked_by_data_quality"] = True
+    elif quality_score < 65:
+        adjusted["recommendation_confidence_score"] = min(
+            int(adjusted.get("recommendation_confidence_score", 0)),
+            55,
+        )
+        adjusted["recommendation_confidence_note"] = (
+            "Dữ liệu đầu vào còn nhiễu, hệ thống tự động hạ trần độ tin cậy để giảm rủi ro."
+        )
+        adjusted["blocked_by_data_quality"] = False
+    else:
+        adjusted["blocked_by_data_quality"] = False
+    return adjusted
 
 # Bộ nhớ Cache
 AI_COMPONENTS = {}
+# Cache ensemble models riêng (Bước 2): load 1 lần, dùng cho mỗi request predict
+ENSEMBLE_CACHE = {}
+
+def get_regression_ensemble(ticker_name):
+    """Load & cache danh sách ensemble models cho ticker (regression mode).
+
+    Trả về list rỗng nếu ticker không có ensemble_seeds trong reg_config.
+    """
+    key = ticker_name.lower()
+    if key not in ENSEMBLE_CACHE:
+        models, _cfg = load_ensemble_models(key.upper())
+        ENSEMBLE_CACHE[key] = models
+    return ENSEMBLE_CACHE[key]
+
+
 def get_ai_components(ticker_name):
     if ticker_name not in AI_COMPONENTS:
-        model = load_model(f'models/cnn_lstm_attn_{ticker_name.lower()}_v1.h5', custom_objects={'AttentionLayer': AttentionLayer})
-        with open(f'models/{ticker_name.lower()}_feature_scaler.pkl', 'rb') as f: f_scaler = pickle.load(f)
-        with open(f'models/{ticker_name.lower()}_target_scaler.pkl', 'rb') as f: t_scaler = pickle.load(f)
-        AI_COMPONENTS[ticker_name] = (model, f_scaler, t_scaler)
+        model_key = ticker_name.lower()
+        prob_config_path = os.path.join(MODELS_DIR, f'{model_key}_prob_config.pkl')
+        prob_model_path = os.path.join(MODELS_DIR, f'cnn_lstm_attn_{model_key}_prob_v1.h5')
+        prob_scaler_path = os.path.join(MODELS_DIR, f'{model_key}_prob_feature_scaler.pkl')
+        prob_calibrator_path = os.path.join(MODELS_DIR, f'{model_key}_prob_calibrator.pkl')
+        reg_model_path = os.path.join(MODELS_DIR, f'cnn_lstm_attn_{model_key}_v1.h5')
+        reg_feature_scaler_path = os.path.join(MODELS_DIR, f'{model_key}_feature_scaler.pkl')
+        reg_target_scaler_path = os.path.join(MODELS_DIR, f'{model_key}_target_scaler.pkl')
+        reg_config_path = os.path.join(MODELS_DIR, f'{model_key}_reg_config.pkl')
+        has_prob_bundle = all(os.path.exists(path) for path in (prob_model_path, prob_scaler_path, prob_config_path))
+        has_reg_bundle = all(os.path.exists(path) for path in (reg_model_path, reg_feature_scaler_path, reg_target_scaler_path))
+        if has_prob_bundle:
+            model = load_model(
+                prob_model_path,
+                custom_objects={'AttentionLayer': AttentionLayer},
+                compile=False,
+            )
+            with open(prob_scaler_path, 'rb') as f:
+                f_scaler = pickle.load(f)
+            with open(prob_config_path, 'rb') as f:
+                prob_config = pickle.load(f)
+            prob_calibrator = None
+            if os.path.exists(prob_calibrator_path):
+                with open(prob_calibrator_path, 'rb') as f:
+                    prob_calibrator = pickle.load(f)
+            AI_COMPONENTS[ticker_name] = (model, f_scaler, None, prob_config, prob_calibrator)
+        elif has_reg_bundle:
+            model = load_model(
+                reg_model_path,
+                custom_objects={'AttentionLayer': AttentionLayer},
+                compile=False,
+            )
+            with open(reg_feature_scaler_path, 'rb') as f:
+                f_scaler = pickle.load(f)
+            with open(reg_target_scaler_path, 'rb') as f:
+                t_scaler = pickle.load(f)
+            reg_config = None
+            if os.path.exists(reg_config_path):
+                with open(reg_config_path, 'rb') as f:
+                    reg_config = pickle.load(f)
+            AI_COMPONENTS[ticker_name] = (model, f_scaler, t_scaler, reg_config, None)
+        else:
+            raise FileNotFoundError(f"Không tìm thấy bundle mô hình hợp lệ cho {ticker_name}.")
     return AI_COMPONENTS[ticker_name]
 
 # Điểm cuối API 
@@ -1412,51 +2223,282 @@ def get_prediction(ticker: str):
 
     try:
         df = fetch_live_data(ticker)
-        model, feature_scaler, target_scaler = get_ai_components(ticker)
+        data_quality = _danh_gia_chat_luong_du_lieu(df)
+        _luu_lich_su_chat_luong_du_lieu(
+            ticker,
+            {
+                "captured_at": datetime.datetime.now().strftime("%d/%m/%Y %H:%M:%S"),
+                "ticker": ticker,
+                "score": data_quality.get("score"),
+                "label": data_quality.get("label"),
+                "source": data_quality.get("source"),
+                "issues": data_quality.get("issues", []),
+                "block_threshold": DATA_QUALITY_BLOCK_THRESHOLD,
+                "blocked": int(data_quality.get("score", 0)) < DATA_QUALITY_BLOCK_THRESHOLD,
+            },
+        )
+
+        # Xây dựng phần chung (chart data, context)
+        chart_columns = ['time', 'open', 'high', 'low', 'close_winsorized', 'volume', 'rsi_14']
+        optional_history_columns = ['foreign_buy_volume', 'foreign_sell_volume', 'foreign_net_volume']
+        chart_columns.extend([
+            column for column in optional_history_columns
+            if column in df.columns and df[column].notna().any()
+        ])
+        chart_data = df[chart_columns].copy()
+        chart_data['time'] = chart_data['time'].astype(str)
+        chart_data = chart_data.replace({np.nan: None})
+        market_context = _lay_boi_canh_cached(ticker)
         
-        features = ['open', 'high', 'low', 'close_winsorized', 'volume', 'sma_10', 'sma_20', 'rsi_14']
-        current_unscaled_seq = df[features].tail(30).values.copy()
-        current_price = df['close_winsorized'].iloc[-1]
-        
+        # Nếu chưa có mô hình AI → trả data-only
+        if not _has_trained_model(ticker):
+            response_payload = {
+                "ticker": ticker,
+                "current_price": float(df['close_winsorized'].iloc[-1]),
+                "current_volume": float(df['volume'].iloc[-1]),
+                "rsi_14": float(df['rsi_14'].iloc[-1]),
+                "latest_data_time": str(df['time'].iloc[-1]).split(' ')[0],
+                "recommendation_threshold": 0.008,
+                "model_available": False,
+                "model_status": "Mô hình AI chưa được huấn luyện cho mã này. Chỉ hiển thị dữ liệu thị trường.",
+                "data_quality": data_quality,
+                "recommendation_blocked_by_data_quality": int(data_quality.get("score", 0)) < DATA_QUALITY_BLOCK_THRESHOLD,
+                "predictions": [],
+                "recommendation": "TRUNG LẬP",
+                "recommendation_color": "#848e9c",
+                "recommendation_note": "Chưa có mô hình AI — chỉ hiển thị dữ liệu lịch sử.",
+                "recommendation_confidence_score": 0,
+                "recommendation_confidence_label": "Không khả dụng",
+                "recommendation_confidence_note": "",
+                "recommendation_score": 0,
+                "price_signal_score": 0,
+                "context_alignment_score": 0,
+                "analysis_signal_label": "",
+                "analysis_signal": [],
+                "market_context": market_context,
+                "model_reliability": _lay_do_tin_cay_mo_hinh(ticker),
+                "chart_data": chart_data.to_dict(orient="records"),
+                "attention_weights": [],
+            }
+            PREDICTION_CACHE[ticker] = {"timestamp": now_ts, "data": response_payload}
+            return response_payload
+
+        # Có mô hình → chạy dự báo đệ quy 15 ngày
+        model, feature_scaler, target_scaler, model_config, prob_calibrator = get_ai_components(ticker)
+        is_probability_mode = bool(model_config and model_config.get("prediction_mode") == "alpha_probability")
+
+        if is_probability_mode:
+            features = model_config.get("feature_columns", FEATURE_COLUMNS)
+            window_size = int(model_config.get("window_size", 30))
+            model_input_df = prepare_live_probability_frame(
+                ticker,
+                df,
+                tickers=tuple(model_config.get("peer_tickers", PROBABILITY_TICKERS)),
+            )
+        else:
+            features = model_config.get("feature_columns", BASE_FEATURE_COLUMNS) if model_config else list(BASE_FEATURE_COLUMNS)
+            window_size = int(model_config.get("window_size", 30)) if model_config else 30
+            # Augment feature engineered nếu feature list yêu cầu (return_*, volatility_*,
+            # alpha_*_vs_peer, rank_*, z_*_vs_peer...). Nếu CSV/live df chưa có các cột này,
+            # gọi hàm augment để model.predict không bị KeyError.
+            model_input_df = df.copy()
+            needs_regression_aug = any(col in features for col in (
+                'return_1d', 'return_3d', 'return_5d', 'return_10d',
+                'volatility_10d', 'volatility_20d', 'drawdown_20d',
+                'price_vs_sma10', 'price_vs_sma20', 'sma10_vs_sma20',
+                'rsi_delta_5', 'volume_zscore_20',
+            ))
+            needs_cross_sectional_aug = any(col in features for col in (
+                'benchmark_return_1d', 'benchmark_return_5d',
+                'alpha_1d_vs_peer', 'alpha_5d_vs_peer',
+                'rank_return_1d', 'rank_return_5d',
+                'z_return_1d_vs_peer', 'rel_volatility_20d',
+            ))
+            if needs_regression_aug:
+                model_input_df = _augment_regression_features(model_input_df)
+            if needs_cross_sectional_aug:
+                model_input_df = _augment_cross_sectional_features(model_input_df, ticker)
+            # Drop NaN trên đúng subset features để tránh lỗi do foreign_* toàn NaN
+            model_input_df = model_input_df.dropna(subset=[c for c in features if c in model_input_df.columns]).reset_index(drop=True)
+
+        if len(model_input_df) < window_size:
+            raise HTTPException(
+                status_code=503,
+                detail=f"Không đủ dữ liệu để dự báo cho {ticker}. Cần tối thiểu {window_size} phiên.",
+            )
+
+        current_unscaled_seq = model_input_df[features].tail(window_size).values.copy()
+        current_price = model_input_df['close_winsorized'].iloc[-1]
+
         predictions = []
-        for step in range(3): 
+        probability_forecast = None
+        if is_probability_mode:
             scaled_seq = feature_scaler.transform(current_unscaled_seq)
             X_in = np.array([scaled_seq])
-            pred_scaled_diff = model.predict(X_in, verbose=0)
-            pred_diff = target_scaler.inverse_transform(pred_scaled_diff).flatten()[0]
-            next_price = current_price + pred_diff
-            predictions.append({"day": f"T+{step+1}", "predicted_diff": float(pred_diff), "predicted_price": float(next_price)})
-            
-            new_row = current_unscaled_seq[-1].copy()
-            new_row[3] = next_price 
-            current_unscaled_seq = np.vstack((current_unscaled_seq[1:], new_row))
-            current_price = next_price
+            probabilities = model.predict(X_in, verbose=0).flatten()
+            probabilities, calibrated = apply_probability_calibrator(probabilities, prob_calibrator)
+            probability_forecast = probability_payload(probabilities, model_config, calibrated=calibrated)
+        forecast_steps = 0 if is_probability_mode else DEFAULT_FORECAST_STEPS
+        predicted_closes = list(df['close_winsorized'].tail(30).values)
+        reg_target_type = (model_config or {}).get("target_type", "price_diff") if not is_probability_mode else None
+        # Bước 4: horizon của model (1 = daily T+1; 5 = forward 5-day)
+        horizon_days = int((model_config or {}).get("horizon_days", 1)) if not is_probability_mode else 1
+        # Map tên cột → index trong features để update đúng vị trí (an toàn với feature list mở rộng)
+        feature_idx = {name: idx for idx, name in enumerate(features)} if not is_probability_mode else {}
+        # Lấy ensemble nếu có (Bước 2): ưu tiên ensemble averaging
+        ensemble_models = get_regression_ensemble(ticker) if not is_probability_mode else []
+        # Track tín hiệu gốc (raw log-return) để confidence gate dùng sau
+        raw_predicted_log_return = 0.0
+        starting_price = float(current_price)  # giá hiện tại (dùng cho interpolation horizon>1)
 
-        # Trích xuất Attention
+        def _set_feat(new_row, name, value):
+            i = feature_idx.get(name)
+            if i is not None:
+                new_row[i] = value
+
+        def _propagate_row(new_row, next_price, step_idx):
+            """Cập nhật 1 row mới cho recursive forecast (horizon=1)."""
+            predicted_closes.append(next_price)
+            _set_feat(new_row, 'open', next_price)
+            _set_feat(new_row, 'high', next_price * 1.005)
+            _set_feat(new_row, 'low', next_price * 0.995)
+            _set_feat(new_row, 'close_winsorized', next_price)
+            if len(predicted_closes) >= 10:
+                _set_feat(new_row, 'sma_10', float(np.mean(predicted_closes[-10:])))
+            if len(predicted_closes) >= 20:
+                _set_feat(new_row, 'sma_20', float(np.mean(predicted_closes[-20:])))
+            log_prices = np.log(np.array(predicted_closes, dtype=float))
+            for h in (1, 3, 5, 10):
+                if len(log_prices) > h:
+                    _set_feat(new_row, f'return_{h}d', float(log_prices[-1] - log_prices[-1 - h]))
+            sma10_idx = feature_idx.get('sma_10')
+            sma20_idx = feature_idx.get('sma_20')
+            if sma10_idx is not None and new_row[sma10_idx]:
+                _set_feat(new_row, 'price_vs_sma10', float(next_price / new_row[sma10_idx] - 1.0))
+            if sma20_idx is not None and new_row[sma20_idx]:
+                _set_feat(new_row, 'price_vs_sma20', float(next_price / new_row[sma20_idx] - 1.0))
+                if sma10_idx is not None and new_row[sma20_idx]:
+                    _set_feat(new_row, 'sma10_vs_sma20',
+                              float(new_row[sma10_idx] / new_row[sma20_idx] - 1.0))
+            return new_row
+
+        # ─── Nhánh A: horizon == 1 — recursive multi-step như cũ ───
+        if not is_probability_mode and horizon_days == 1:
+            for step in range(forecast_steps):
+                scaled_seq = feature_scaler.transform(current_unscaled_seq)
+                X_in = np.array([scaled_seq])
+                if ensemble_models:
+                    pred_scaled = predict_ensemble(ensemble_models, X_in)
+                else:
+                    pred_scaled = model.predict(X_in, verbose=0)
+                pred_target = target_scaler.inverse_transform(pred_scaled).flatten()[0]
+                if reg_target_type == "log_return":
+                    next_price = current_price * float(np.exp(pred_target))
+                    pred_diff = next_price - current_price
+                    if step == 0:
+                        raw_predicted_log_return = float(pred_target)
+                else:
+                    pred_diff = pred_target
+                    next_price = current_price + pred_diff
+                    if step == 0:
+                        raw_predicted_log_return = (float(np.log(next_price / current_price))
+                                                     if current_price > 0 else 0.0)
+                predictions.append({"day": f"T+{step+1}",
+                                    "predicted_diff": float(pred_diff),
+                                    "predicted_price": float(next_price)})
+                new_row = current_unscaled_seq[-1].copy()
+                new_row = _propagate_row(new_row, next_price, step)
+                current_unscaled_seq = np.vstack((current_unscaled_seq[1:], new_row))
+                current_price = next_price
+
+        # ─── Nhánh B: horizon > 1 — single prediction + interpolation ───
+        # Model output = log(P_{t+H}/P_t) tổng cộng H ngày. Ta phân đều thành
+        # daily rate và sinh T+1..T+H (+ giữ nguyên plateau cho T+H+1..) để
+        # frontend vẫn có multi-step forecast hiển thị.
+        elif not is_probability_mode and horizon_days > 1:
+            scaled_seq = feature_scaler.transform(current_unscaled_seq)
+            X_in = np.array([scaled_seq])
+            if ensemble_models:
+                pred_scaled = predict_ensemble(ensemble_models, X_in)
+            else:
+                pred_scaled = model.predict(X_in, verbose=0)
+            pred_target = target_scaler.inverse_transform(pred_scaled).flatten()[0]
+            # Với horizon>1 target_type luôn là log_return (không hỗ trợ price_diff)
+            total_log_return = float(pred_target)
+            raw_predicted_log_return = total_log_return  # raw signal cho gate
+            daily_rate = total_log_return / horizon_days
+            for step in range(forecast_steps):
+                # Trong H ngày đầu: tích luỹ daily_rate * (step+1)
+                # Sau H ngày: giữ plateau (không có signal thêm)
+                cumulative = daily_rate * min(step + 1, horizon_days)
+                next_price = starting_price * float(np.exp(cumulative))
+                pred_diff = next_price - starting_price
+                predictions.append({"day": f"T+{step+1}",
+                                    "predicted_diff": float(pred_diff),
+                                    "predicted_price": float(next_price)})
+
+        # Trích xuất Attention (tín hiệu hỗ trợ phân tích)
         last_30_df = df.tail(30).copy()
         volatility = abs(last_30_df['close_winsorized'].diff().fillna(0))
         norm_volatility = (volatility - volatility.min()) / (volatility.max() - volatility.min() + 1e-9)
         norm_volume = (last_30_df['volume'] - last_30_df['volume'].min()) / (last_30_df['volume'].max() - last_30_df['volume'].min() + 1e-9)
-        
-        # Trọng số tổng hợp (Biến động giá + Đột biến khối lượng)
         raw_attention = (norm_volatility * 0.6) + (norm_volume * 0.4)
         attention_weights = (raw_attention / raw_attention.sum()).tolist()
-        
-        # Gắn ngày tháng tương ứng cho 30 trọng số này
         attention_data = [
-            {"time": str(t).split(' ')[0], "weight": float(w)} 
+            {"time": str(t).split(' ')[0], "weight": float(w)}
             for t, w in zip(last_30_df['time'], attention_weights)
         ]
 
-        chart_data = df[['time', 'open', 'high', 'low', 'close_winsorized', 'volume', 'rsi_14']].copy()
-        chart_data['time'] = chart_data['time'].astype(str)
-        market_context = _lay_boi_canh_cached(ticker)
-        recommendation_bundle = _tinh_khuyen_nghi_va_do_tin_cay(
-            current_price=float(df['close_winsorized'].iloc[-1]),
-            predicted_price=float(predictions[0]["predicted_price"]),
-            threshold=0.0004,
-            market_context=market_context,
+        if probability_forecast:
+            recommendation_bundle = _tinh_khuyen_nghi_xac_suat(
+                probability_forecast=probability_forecast,
+                market_context=market_context,
+            )
+        else:
+            recommendation_bundle = _tinh_khuyen_nghi_va_do_tin_cay(
+                current_price=float(df['close_winsorized'].iloc[-1]),
+                predicted_price=float(predictions[0]["predicted_price"]),
+                threshold=0.008,
+                market_context=market_context,
+            )
+        recommendation_bundle = _giam_cap_khuyen_nghi_neu_du_lieu_kem(
+            recommendation_bundle=recommendation_bundle,
+            data_quality=data_quality,
         )
+
+        # ─── Bước 5: Confidence Gate ───────────────────────────────────────
+        # Tính confidence score = |raw_predicted_log_return| / ref_std_train.
+        # Frontend có thể hiển thị badge "Tín hiệu mạnh" khi score >= threshold.
+        confidence_gate_info = None
+        if not is_probability_mode and raw_predicted_log_return is not None:
+            ref_std = float((model_config or {}).get("train_log_return_std") or 0.0)
+            if ref_std <= 0:
+                # Fallback: ước lượng từ df (window gần nhất)
+                recent_log_returns = np.log(df['close_winsorized'] / df['close_winsorized'].shift(1)).dropna()
+                ref_std = float(np.std(recent_log_returns.tail(252))) if len(recent_log_returns) >= 30 else 0.02
+            confidence_score = abs(float(raw_predicted_log_return)) / max(ref_std, 1e-9)
+            # Threshold chuẩn theo coverage 20% (từ diagnostic): ~0.4 cho horizon=5
+            gate_threshold = float((model_config or {}).get("confidence_threshold_cov20", 0.40))
+            gate_passed = bool(confidence_score >= gate_threshold)
+            confidence_gate_info = {
+                "raw_predicted_log_return": float(raw_predicted_log_return),
+                "reference_std": float(ref_std),
+                "confidence_score": float(confidence_score),
+                "threshold": float(gate_threshold),
+                "passed": gate_passed,
+                "label": ("Tín hiệu mạnh" if gate_passed else "Tín hiệu yếu — chờ thêm xác nhận"),
+                "horizon_days": int(horizon_days),
+            }
+            # Nếu gate KHÔNG PASS và recommendation đang là KHẢ QUAN/KÉM KHẢ QUAN →
+            # hạ xuống TRUNG LẬP (đồng thuận với backtest: chỉ trade tín hiệu mạnh).
+            if not gate_passed and recommendation_bundle.get("recommendation") in ("KHẢ QUAN", "KÉM KHẢ QUAN"):
+                recommendation_bundle["recommendation"] = "TRUNG LẬP"
+                recommendation_bundle["recommendation_color"] = "#fcd535"
+                recommendation_bundle["recommendation_note"] = (
+                    "Tín hiệu AI chưa vượt ngưỡng tự tin (confidence gate) — "
+                    "ưu tiên theo dõi thêm trước khi ra quyết định."
+                )
+                recommendation_bundle["recommendation_confidence_label"] = "Thấp"
 
         _luu_lich_su_tin_cay(
             ticker,
@@ -1464,7 +2506,11 @@ def get_prediction(ticker: str):
                 "captured_at": datetime.datetime.now().strftime("%d/%m/%Y %H:%M:%S"),
                 "ticker": ticker,
                 "current_price": float(df['close_winsorized'].iloc[-1]),
-                "predicted_price_t1": float(predictions[0]["predicted_price"]),
+                "predicted_price_t1": float(predictions[0]["predicted_price"]) if predictions else None,
+                "prediction_mode": "alpha_probability" if probability_forecast else "price_regression",
+                "outperform_probability": probability_forecast.get("outperform_probability") if probability_forecast else None,
+                "neutral_probability": probability_forecast.get("neutral_probability") if probability_forecast else None,
+                "underperform_probability": probability_forecast.get("underperform_probability") if probability_forecast else None,
                 "recommendation": recommendation_bundle["recommendation"],
                 "recommendation_confidence_score": recommendation_bundle["recommendation_confidence_score"],
                 "recommendation_confidence_label": recommendation_bundle["recommendation_confidence_label"],
@@ -1474,21 +2520,36 @@ def get_prediction(ticker: str):
                 "overall_market_label": market_context.get("overall_market_label", "Theo dõi thêm"),
             },
         )
-        
+
         response_payload = {
             "ticker": ticker,
             "current_price": float(df['close_winsorized'].iloc[-1]),
             "current_volume": float(df['volume'].iloc[-1]),
             "rsi_14": float(df['rsi_14'].iloc[-1]),
             "latest_data_time": str(df['time'].iloc[-1]).split(' ')[0],
-            "recommendation_threshold": 0.0004,
+            "recommendation_threshold": 0.008,
+            "model_available": True,
+            "model_status": "Mô hình AI đã sẵn sàng và đang hoạt động ổn định.",
+            "data_quality": data_quality,
+            "recommendation_blocked_by_data_quality": bool(recommendation_bundle.get("blocked_by_data_quality", False)),
             "analysis_signal_label": "Tín hiệu hỗ trợ phân tích",
             "analysis_signal": attention_data,
             "market_context": market_context,
+            "prediction_mode": "alpha_probability" if probability_forecast else "price_regression",
+            "model_metadata": {
+                "prediction_mode": "alpha_probability" if probability_forecast else "price_regression",
+                "window_size": int(window_size),
+                "feature_count": int(len(features)),
+                "calibrated": bool(probability_forecast.get("calibrated", False)) if probability_forecast else False,
+            },
+            "probability_forecast": probability_forecast,
             "predictions": predictions,
+            "horizon_days": int(horizon_days) if not is_probability_mode else 1,
+            "confidence_gate": confidence_gate_info,
             **recommendation_bundle,
+            "model_reliability": _lay_do_tin_cay_mo_hinh(ticker),
             "chart_data": chart_data.to_dict(orient="records"),
-            "attention_weights": attention_data 
+            "attention_weights": attention_data
         }
         PREDICTION_CACHE[ticker] = {
             "timestamp": now_ts,
@@ -1521,76 +2582,6 @@ def get_confidence_history(ticker: str):
         raise
     except Exception as exc:
         raise HTTPException(status_code=500, detail=str(exc))
-
-
-@app.get("/api/ablation/{ticker}")
-def get_ablation_data(ticker: str):
-    ticker = _kiem_tra_ticker_hop_le(ticker)
-
-    try:
-        ablation_df = _doc_ket_qua_ablation().copy()
-        ticker_df = ablation_df[ablation_df["ticker"].str.upper() == ticker].copy()
-
-        if ticker_df.empty:
-            raise HTTPException(status_code=404, detail="Chưa có dữ liệu so sánh mô hình cho mã này.")
-
-        ticker_df["sort_order"] = ticker_df["model_name"].map(THU_TU_MO_HINH)
-        ticker_df = ticker_df.sort_values(by=["sort_order", "model_name"]).reset_index(drop=True)
-
-        metrics = []
-        for _, row in ticker_df.iterrows():
-            model_name = row["model_name"]
-            metrics.append(
-                {
-                    "model_name": model_name,
-                    "model_label": TEN_HIEN_THI_MO_HINH.get(model_name, model_name),
-                    "rmse": float(row["RMSE"]),
-                    "mae": float(row["MAE"]),
-                    "mape": float(row["MAPE"]),
-                    "r2": float(row["R2"]),
-                    "da": float(row["DA"]),
-                    "forecast_chart_url": _tao_url_anh_ablation(ticker, model_name),
-                }
-            )
-
-        return {
-            "ticker": ticker,
-            "default_model": "cnn_lstm_attention",
-            "overview_chart_url": _tao_url_anh_ablation(ticker, "overview"),
-            "original_price_chart_url": _tao_url_anh_ablation(ticker, "original"),
-            "metrics": metrics,
-        }
-    except HTTPException:
-        raise
-    except FileNotFoundError as exc:
-        raise HTTPException(status_code=404, detail=str(exc))
-    except Exception as exc:
-        raise HTTPException(status_code=500, detail=str(exc))
-
-
-@app.get("/api/ablation/{ticker}/images/{image_key}")
-def get_ablation_image(ticker: str, image_key: str):
-    ticker = _kiem_tra_ticker_hop_le(ticker)
-    ticker_dir = os.path.join(ABLATION_DIR, ticker)
-
-    image_map = {
-        "overview": f"{ticker}_ablation_chart.png",
-        "original": f"{ticker}_original_price_chart.png",
-    }
-
-    if image_key in TEN_HIEN_THI_MO_HINH:
-        file_name = f"{image_key}_forecast_vs_actual.png"
-    else:
-        file_name = image_map.get(image_key)
-
-    if not file_name:
-        raise HTTPException(status_code=404, detail="Không tìm thấy ảnh yêu cầu.")
-
-    file_path = os.path.join(ticker_dir, file_name)
-    if not os.path.exists(file_path):
-        raise HTTPException(status_code=404, detail="Ảnh so sánh mô hình chưa được tạo.")
-
-    return FileResponse(file_path, media_type="image/png")
 
 
 def _lay_anh_tu_entry_rss(entry):
@@ -1627,34 +2618,44 @@ def _lay_anh_tu_entry_rss(entry):
 @app.get("/api/news")
 async def get_market_news(limit: int = Query(default=200, ge=20, le=400)):
     try:
-        # 1. Bổ sung các nguồn báo uy tín và miễn phí
-        rss_urls = RSS_URLS
-        
-        # 2. Mở rộng từ khóa
-        keywords = ['vcb', 'vietcombank', 'bid', 'bidv', 'ctg', 'vietinbank', 'lãi suất', 'nhnn', 'tín dụng', 'ngân hàng', 'cổ phiếu', 'chứng khoán', 'vn-index']
+        keywords = [
+            'vcb', 'vietcombank', 'bid', 'bidv', 'ctg', 'vietinbank',
+            'mbb', 'mb bank', 'tcb', 'techcombank', 'vpb', 'vpbank',
+            'acb', 'hdb', 'hdbank', 'shb', 'vib',
+            'lãi suất', 'nhnn', 'tín dụng', 'ngân hàng',
+            'cổ phiếu', 'chứng khoán', 'vn-index',
+        ]
         
         all_articles = []
-        for url in rss_urls:
-            feed = feedparser.parse(url)
-            for entry in feed.entries:
-                title_lower = entry.title.lower()
-                desc_lower = entry.description.lower() if hasattr(entry, 'description') else ""
+        for source_config in RSS_SOURCES:
+            url = source_config["url"]
+            source = source_config["name"]
+            try:
+                feed = feedparser.parse(url)
+            except Exception:
+                continue
+
+            source_articles = []
+            for entry in getattr(feed, "entries", []):
+                title = getattr(entry, "title", "")
+                description = getattr(entry, "description", "") if hasattr(entry, "description") else ""
+                title_lower = title.lower()
+                desc_lower = description.lower()
                 
                 if any(kw in title_lower or kw in desc_lower for kw in keywords):
                     parsed_time = entry.published_parsed if hasattr(entry, 'published_parsed') else time.localtime()
-                    
-                    # Trích xuất nguồn báo từ link để hiển thị cho đẹp
-                    source = "CafeF" if "cafef" in url else "Vietstock" if "vietstock" in url else "VNExpress" if "vnexpress" in url else "Báo Đầu Tư"
-                    
-                    all_articles.append({
-                        "title": entry.title,
-                        "link": entry.link,
+                    source_articles.append({
+                        "title": title,
+                        "link": getattr(entry, "link", ""),
                         "published": time.strftime('%d/%m/%Y %H:%M', parsed_time),
-                        "description": entry.description if hasattr(entry, 'description') else "",
+                        "description": description,
                         "source": source,
                         "image_url": _lay_anh_tu_entry_rss(entry),
                         "timestamp": time.mktime(parsed_time)
                     })
+
+            if source_articles:
+                all_articles.extend(source_articles)
         
         all_articles.sort(key=lambda x: x['timestamp'], reverse=True)
         
@@ -1705,7 +2706,7 @@ async def ai_assistant(request: Request):
         - Nếu người dùng hỏi các câu thuần túy về lịch sử/đời sống, hãy cứ trả lời tự nhiên như một cuốn bách khoa toàn thư đa năng.
 
         [TÀI NGUYÊN THỜI GIAN THỰC]
-        - Cổ phiếu người dùng đang xem: {ticker} (Giá: {current_data['price']}, Dự báo AI: {current_data['predict']}). 
+        - Cổ phiếu người dùng đang xem: {ticker} (Giá: {current_data['price']}, Tín hiệu xu hướng AI: {current_data['predict']}). 
         - Điểm tin hôm nay: {current_data['news_summary']}
         - Bối cảnh thị trường: {current_data.get('market_context', 'Chưa có dữ liệu bối cảnh')}
         """
@@ -1780,13 +2781,13 @@ def get_company_profile(ticker: str):
             "listed_shares": profile.listed_shares,
             "outstanding_shares": profile.outstanding_shares,
             "first_listed_shares": profile.first_listed_shares,
-            "logo_url": profile.logo_url
+            "logo_url": BANK_LOGOS.get(profile.ticker) or profile.logo_url
         }
     finally:
         db.close()
 
 
-# ─── PHASE 2: Model Performance & Signal History ──────────────────────────────
+# â”€â”€â”€ PHASE 2: Model Performance & Signal History â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 def _doc_toan_bo_lich_su_tin_cay(ticker_name):
     """Đọc TOÀN BỘ confidence history (không giới hạn limit) cho performance analysis."""
@@ -1816,168 +2817,93 @@ def _parse_captured_at(date_str):
     return None
 
 
-def _tinh_performance_metrics(rows):
-    """
-    Tính toán các chỉ số hiệu suất từ lịch sử dự đoán.
-    So sánh predicted_price_t1 của entry[i] với current_price của entry[i+1].
-    """
-    if len(rows) < 2:
-        return {
-            "prediction_pairs": [],
-            "summary": {"total_predictions": 0, "da_percent": 0, "mape_percent": 0, "hit_rate_percent": 0},
-            "weekly_metrics": [],
-            "confusion_matrix": {"tp": 0, "fp": 0, "tn": 0, "fn": 0},
-        }
-
-    # Parse & sort by date
-    parsed = []
-    for row in rows:
-        dt = _parse_captured_at(row.get("captured_at", ""))
-        if dt is None:
-            continue
-        parsed.append({**row, "_dt": dt})
-    parsed.sort(key=lambda x: x["_dt"])
-
-    # Deduplicate: giữ entry cuối cùng mỗi ngày
-    daily = {}
-    for entry in parsed:
-        day_key = entry["_dt"].strftime("%Y-%m-%d")
-        daily[day_key] = entry
-    sorted_days = sorted(daily.keys())
-
-    # Tạo prediction pairs
-    pairs = []
-    for i in range(len(sorted_days) - 1):
-        entry = daily[sorted_days[i]]
-        next_entry = daily[sorted_days[i + 1]]
-
-        predicted = float(entry.get("predicted_price_t1", 0))
-        actual = float(next_entry.get("current_price", 0))
-        current = float(entry.get("current_price", 0))
-
-        if current <= 0 or actual <= 0 or predicted <= 0:
-            continue
-
-        error = abs(predicted - actual) / actual * 100
-        pred_direction = 1 if predicted >= current else -1
-        actual_direction = 1 if actual >= current else -1
-        is_direction_correct = pred_direction == actual_direction
-
-        pairs.append({
-            "date": sorted_days[i],
-            "next_date": sorted_days[i + 1],
-            "current_price": round(current, 2),
-            "predicted_price": round(predicted, 2),
-            "actual_price": round(actual, 2),
-            "error_percent": round(error, 4),
-            "pred_direction": "up" if pred_direction == 1 else "down",
-            "actual_direction": "up" if actual_direction == 1 else "down",
-            "direction_correct": is_direction_correct,
-            "recommendation": entry.get("recommendation", ""),
-            "confidence_score": float(entry.get("recommendation_confidence_score", 50)),
-        })
-
-    # Summary metrics
-    total = len(pairs)
-    correct_dir = sum(1 for p in pairs if p["direction_correct"])
-    avg_mape = sum(p["error_percent"] for p in pairs) / total if total > 0 else 0
-    da_percent = (correct_dir / total * 100) if total > 0 else 0
-
-    # Signal hit rate (chỉ tính tín hiệu BUY/SELL, bỏ HOLD/GIỮ)
-    signal_pairs = [p for p in pairs if "GIỮ" not in p["recommendation"] and "TRUNG" not in p["recommendation"]]
-    signal_hits = sum(1 for p in signal_pairs if p["direction_correct"])
-    signal_total = len(signal_pairs)
-    hit_rate = (signal_hits / signal_total * 100) if signal_total > 0 else 0
-
-    # Confusion matrix cho direction (UP/DOWN)
-    tp = sum(1 for p in pairs if p["pred_direction"] == "up" and p["actual_direction"] == "up")
-    fp = sum(1 for p in pairs if p["pred_direction"] == "up" and p["actual_direction"] == "down")
-    fn = sum(1 for p in pairs if p["pred_direction"] == "down" and p["actual_direction"] == "up")
-    tn = sum(1 for p in pairs if p["pred_direction"] == "down" and p["actual_direction"] == "down")
-
-    # Weekly metrics
-    weekly = {}
-    for p in pairs:
-        dt = datetime.datetime.strptime(p["date"], "%Y-%m-%d")
-        week_key = dt.strftime("%Y-W%W")
-        if week_key not in weekly:
-            weekly[week_key] = {"correct": 0, "total": 0, "mape_sum": 0}
-        weekly[week_key]["total"] += 1
-        weekly[week_key]["mape_sum"] += p["error_percent"]
-        if p["direction_correct"]:
-            weekly[week_key]["correct"] += 1
-
-    weekly_metrics = []
-    for wk in sorted(weekly.keys()):
-        w = weekly[wk]
-        weekly_metrics.append({
-            "week": wk,
-            "da_percent": round(w["correct"] / w["total"] * 100, 2) if w["total"] > 0 else 0,
-            "mape_percent": round(w["mape_sum"] / w["total"], 4) if w["total"] > 0 else 0,
-            "sample_count": w["total"],
-        })
-
-    return {
-        "prediction_pairs": pairs,
-        "summary": {
-            "total_predictions": total,
-            "correct_directions": correct_dir,
-            "da_percent": round(da_percent, 2),
-            "mape_percent": round(avg_mape, 4),
-            "hit_rate_percent": round(hit_rate, 2),
-            "signal_total": signal_total,
-            "signal_hits": signal_hits,
-        },
-        "weekly_metrics": weekly_metrics,
-        "confusion_matrix": {"tp": tp, "fp": fp, "tn": tn, "fn": fn},
-    }
-
-
-@app.get("/api/performance/{ticker}")
-def get_model_performance(ticker: str):
-    """Trả về dữ liệu hiệu suất mô hình: predicted vs actual, DA, MAPE, confusion matrix."""
-    ticker = _kiem_tra_ticker_hop_le(ticker)
+def _safe_float(value, default=None):
     try:
-        rows = _doc_toan_bo_lich_su_tin_cay(ticker)
-        if not rows:
-            raise HTTPException(status_code=404, detail="Chưa có dữ liệu lịch sử dự đoán cho mã này.")
+        if value is None:
+            return default
+        if isinstance(value, str) and not value.strip():
+            return default
+        number = float(value)
+        if np.isfinite(number):
+            return number
+        return default
+    except (TypeError, ValueError):
+        return default
 
-        perf = _tinh_performance_metrics(rows)
 
-        # Kèm ablation data cho model comparison
-        ablation_metrics = []
-        try:
-            ablation_df = _doc_ket_qua_ablation().copy()
-            ticker_df = ablation_df[ablation_df["ticker"].str.upper() == ticker].copy()
-            if not ticker_df.empty:
-                ticker_df["sort_order"] = ticker_df["model_name"].map(THU_TU_MO_HINH)
-                ticker_df = ticker_df.sort_values(by=["sort_order"]).reset_index(drop=True)
-                for _, row in ticker_df.iterrows():
-                    ablation_metrics.append({
-                        "model_name": row["model_name"],
-                        "model_label": TEN_HIEN_THI_MO_HINH.get(row["model_name"], row["model_name"]),
-                        "rmse": round(float(row["RMSE"]), 4),
-                        "mae": round(float(row["MAE"]), 4),
-                        "mape": round(float(row["MAPE"]), 4),
-                        "r2": round(float(row["R2"]), 4),
-                        "da": round(float(row["DA"]), 2),
-                        "is_default": row["model_name"] == "cnn_lstm_attention",
-                    })
-        except Exception:
-            pass
+def _bo_dau_tieng_viet(text):
+    replacements = {
+        "À": "A", "Á": "A", "Ả": "A", "Ã": "A", "Ạ": "A", "Ă": "A", "Ằ": "A", "Ắ": "A", "Ẳ": "A", "Ẵ": "A", "Ặ": "A", "Â": "A", "Ầ": "A", "Ấ": "A", "Ẩ": "A", "Ẫ": "A", "Ậ": "A",
+        "È": "E", "É": "E", "Ẻ": "E", "Ẽ": "E", "Ẹ": "E", "Ê": "E", "Ề": "E", "Ế": "E", "Ể": "E", "Ễ": "E", "Ệ": "E",
+        "Ì": "I", "Í": "I", "Ỉ": "I", "Ĩ": "I", "Ị": "I",
+        "Ò": "O", "Ó": "O", "Ỏ": "O", "Õ": "O", "Ọ": "O", "Ô": "O", "Ồ": "O", "Ố": "O", "Ổ": "O", "Ỗ": "O", "Ộ": "O", "Ơ": "O", "Ờ": "O", "Ớ": "O", "Ở": "O", "Ỡ": "O", "Ợ": "O",
+        "Ù": "U", "Ú": "U", "Ủ": "U", "Ũ": "U", "Ụ": "U", "Ư": "U", "Ừ": "U", "Ứ": "U", "Ử": "U", "Ữ": "U", "Ự": "U",
+        "Ỳ": "Y", "Ý": "Y", "Ỷ": "Y", "Ỹ": "Y", "Ỵ": "Y", "Đ": "D",
+    }
+    normalized = str(text or "").upper()
+    for src, dst in replacements.items():
+        normalized = normalized.replace(src, dst)
+    return normalized
 
-        return {
-            "ticker": ticker,
-            "prediction_pairs": perf["prediction_pairs"],
-            "summary": perf["summary"],
-            "weekly_metrics": perf["weekly_metrics"],
-            "confusion_matrix": perf["confusion_matrix"],
-            "ablation_comparison": ablation_metrics,
-        }
-    except HTTPException:
-        raise
-    except Exception as exc:
-        raise HTTPException(status_code=500, detail=str(exc))
+
+def _lay_tone_tin_hieu(entry, current_price=None, predicted_price=None):
+    predicted_class = str(entry.get("predicted_class") or entry.get("probability_predicted_class") or "").lower()
+    if predicted_class == "outperform":
+        return "positive"
+    if predicted_class == "underperform":
+        return "negative"
+    if predicted_class == "neutral":
+        return "neutral"
+
+    raw = _bo_dau_tieng_viet(entry.get("recommendation", ""))
+    if "KEM KHA QUAN" in raw or "BAN" in raw or "UNDERPERFORM" in raw:
+        return "negative"
+    if "KHA QUAN" in raw or "MUA" in raw or "OUTPERFORM" in raw:
+        return "positive"
+    if "TRUNG" in raw or "GIU" in raw or "HOLD" in raw or "NEUTRAL" in raw:
+        return "neutral"
+
+    p_out = _safe_float(entry.get("outperform_probability"))
+    p_under = _safe_float(entry.get("underperform_probability"))
+    if p_out is not None or p_under is not None:
+        edge = (p_out or 0.0) - (p_under or 0.0)
+        if edge >= 0.12:
+            return "positive"
+        if edge <= -0.12:
+            return "negative"
+        return "neutral"
+
+    if current_price and predicted_price:
+        change_ratio = (predicted_price - current_price) / current_price
+        if change_ratio >= 0.001:
+            return "positive"
+        if change_ratio <= -0.001:
+            return "negative"
+    return "neutral"
+
+
+def _direction_from_tone(tone):
+    if tone == "positive":
+        return "up"
+    if tone == "negative":
+        return "down"
+    return "neutral"
+
+
+def _actual_direction_from_return(return_percent, neutral_band=0.5):
+    if return_percent is None:
+        return "neutral"
+    if return_percent >= neutral_band:
+        return "up"
+    if return_percent <= -neutral_band:
+        return "down"
+    return "neutral"
+
+
+def _signal_result(signal_tone, actual_return_percent, neutral_band=0.5):
+    actual_direction = _actual_direction_from_return(actual_return_percent, neutral_band)
+    expected_direction = _direction_from_tone(signal_tone)
+    return "correct" if expected_direction == actual_direction else "incorrect"
 
 
 @app.get("/api/signal-history/{ticker}")
@@ -2011,34 +2937,48 @@ def get_signal_history(ticker: str, days: int = 90):
         signals = []
         for i, day in enumerate(filtered_days):
             entry = daily[day]
-            current = float(entry.get("current_price", 0))
-            predicted = float(entry.get("predicted_price_t1", 0))
+            current = _safe_float(entry.get("current_price"), 0)
+            predicted = _safe_float(entry.get("predicted_price_t1"))
             recommendation = entry.get("recommendation", "")
-            confidence = float(entry.get("recommendation_confidence_score", 50))
+            confidence = _safe_float(entry.get("recommendation_confidence_score"), 50)
+            signal_tone = _lay_tone_tin_hieu(entry, current, predicted)
 
             # Tìm actual price từ ngày tiếp theo
             day_idx = sorted_days.index(day)
             actual = None
             error_pct = None
+            actual_return_pct = None
+            actual_direction = None
+            evaluation_date = None
             result = None
             if day_idx + 1 < len(sorted_days):
                 next_entry = daily[sorted_days[day_idx + 1]]
-                actual = float(next_entry.get("current_price", 0))
-                if actual > 0:
-                    error_pct = round(abs(predicted - actual) / actual * 100, 4)
-                    pred_dir = 1 if predicted >= current else -1
-                    actual_dir = 1 if actual >= current else -1
-                    result = "correct" if pred_dir == actual_dir else "incorrect"
+                evaluation_date = sorted_days[day_idx + 1]
+                actual = _safe_float(next_entry.get("current_price"))
+                if actual and actual > 0 and current and current > 0:
+                    if predicted and predicted > 0:
+                        error_pct = round(abs(predicted - actual) / actual * 100, 4)
+                    actual_return_pct = round(((actual - current) / current) * 100, 4)
+                    actual_direction = _actual_direction_from_return(actual_return_pct)
+                    result = _signal_result(signal_tone, actual_return_pct)
 
             signals.append({
                 "date": day,
+                "evaluation_date": evaluation_date,
                 "recommendation": recommendation,
+                "signal_tone": signal_tone,
                 "confidence_score": confidence,
                 "current_price": round(current, 2),
-                "predicted_price": round(predicted, 2),
+                "predicted_price": round(predicted, 2) if predicted else None,
                 "actual_price": round(actual, 2) if actual else None,
+                "actual_return_percent": actual_return_pct,
+                "actual_direction": actual_direction,
                 "error_percent": error_pct,
                 "result": result,
+                "prediction_mode": entry.get("prediction_mode") or "price_regression",
+                "outperform_probability": _safe_float(entry.get("outperform_probability")),
+                "neutral_probability": _safe_float(entry.get("neutral_probability")),
+                "underperform_probability": _safe_float(entry.get("underperform_probability")),
             })
 
         # Summary
@@ -2059,3 +2999,78 @@ def get_signal_history(ticker: str, days: int = 90):
         raise
     except Exception as exc:
         raise HTTPException(status_code=500, detail=str(exc))
+
+
+# ── Endpoint: Sở hữu nước ngoài (Foreign Ownership) ─────────────────────────
+@app.get("/api/foreign-ownership/{ticker}")
+def get_foreign_ownership(ticker: str):
+    """Trả về cơ cấu sở hữu, cổ đông lớn và giao dịch khối ngoại."""
+    ticker = _kiem_tra_ticker_hop_le(ticker)
+    now_ts = time.time()
+    cached_item = FOREIGN_OWNERSHIP_CACHE.get(ticker)
+    if cached_item and (now_ts - cached_item["timestamp"] <= FOREIGN_OWNERSHIP_CACHE_TTL_SECONDS):
+        return cached_item["data"]
+
+    try:
+        ssi_payload = _lay_room_va_dtnn_tu_ssi_iboard(ticker)
+        if ssi_payload:
+            FOREIGN_OWNERSHIP_CACHE[ticker] = {"timestamp": now_ts, "data": ssi_payload}
+            return ssi_payload
+    except Exception:
+        pass
+
+    try:
+        stock = Vnstock().stock(symbol=ticker, source='KBS')
+
+        # 1. Cơ cấu sở hữu theo loại hình
+        ownership_data = []
+        try:
+            df_own = stock.company.ownership()
+            if df_own is not None and not df_own.empty:
+                ownership_data = df_own.to_dict(orient='records')
+        except Exception:
+            pass
+
+        # 2. Danh sách cổ đông lớn
+        shareholders_data = []
+        try:
+            df_sh = stock.company.shareholders()
+            if df_sh is not None and not df_sh.empty:
+                shareholders_data = df_sh.to_dict(orient='records')
+        except Exception:
+            pass
+
+        # 3. Khối lượng mua/bán nước ngoài hôm nay
+        foreign_trading = {}
+        try:
+            from vnstock.explorer.kbs.trading import Trading as KBSTrading
+            df_board = KBSTrading(ticker).price_board([ticker], get_all=True)
+            if df_board is not None and not df_board.empty:
+                row = df_board.iloc[0].to_dict()
+                buy_volume = _ep_so_int(row.get("foreign_buy_volume"), 0)
+                sell_volume = _ep_so_int(row.get("foreign_sell_volume"), 0)
+                foreign_trading = {
+                    "foreign_buy_volume": buy_volume,
+                    "foreign_sell_volume": sell_volume,
+                    "foreign_net_volume": buy_volume - sell_volume,
+                    "foreign_ownership_ratio": row.get("foreign_ownership_ratio", None),
+                    "source": PROFILE_EXTERNAL_PROVIDER_LABEL,
+                }
+        except Exception:
+            pass
+
+        foreign_room = _lay_room_ngoai_tu_vnstock(ticker) or {}
+
+        response_payload = {
+            "ticker": ticker,
+            "source": PROFILE_EXTERNAL_PROVIDER_LABEL,
+            "updated_at": datetime.datetime.now().strftime("%d/%m/%Y %H:%M"),
+            "foreign_room": foreign_room,
+            "ownership_structure": ownership_data,
+            "major_shareholders": shareholders_data,
+            "foreign_trading_today": foreign_trading,
+        }
+        FOREIGN_OWNERSHIP_CACHE[ticker] = {"timestamp": now_ts, "data": response_payload}
+        return response_payload
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Lỗi khi truy vấn dữ liệu sở hữu: {str(e)}")

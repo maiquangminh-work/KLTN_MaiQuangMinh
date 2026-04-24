@@ -1,16 +1,46 @@
-# React + Vite
+# MinSight Banking AI — Frontend
 
-This template provides a minimal setup to get React working in Vite with HMR and some ESLint rules.
+Single-page application (React + Vite) cho hệ thống dự báo giá cổ phiếu ngân hàng.
 
-Currently, two official plugins are available:
+## Công nghệ
 
-- [@vitejs/plugin-react](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react) uses [Babel](https://babeljs.io/) (or [oxc](https://oxc.rs) when used in [rolldown-vite](https://vite.dev/guide/rolldown)) for Fast Refresh
-- [@vitejs/plugin-react-swc](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react-swc) uses [SWC](https://swc.rs/) for Fast Refresh
+- **React 18** + **Vite** (dev server, HMR, production build)
+- **React Router v6** — điều hướng 4 trang chính
+- **lightweight-charts** — biểu đồ nến & overlay dự báo
+- **axios** — gọi backend FastAPI
 
-## React Compiler
+## Cấu trúc
 
-The React Compiler is not enabled on this template because of its impact on dev & build performances. To add it, see [this documentation](https://react.dev/learn/react-compiler/installation).
+```text
+frontend/src/
+├── main.jsx / App.jsx          # Entry + layout shell + routes
+├── api/                        # axios client + endpoints
+├── components/                 # Header, Footer, ChatWidget, Panels
+├── contexts/                   # Theme, MarketData
+├── hooks/                      # useChartSetup, useNewsAnalytics, useChatWidget
+├── pages/                      # ChartPage, NewsPage, ProfilePage, AboutPage
+├── styles/                     # CSS modules
+└── utils/                      # formatting, recommendation, constants
+```
 
-## Expanding the ESLint configuration
+## Route
 
-If you are developing a production application, we recommend using TypeScript with type-aware lint rules enabled. Check out the [TS template](https://github.com/vitejs/vite/tree/main/packages/create-vite/template-react-ts) for information on how to integrate TypeScript and [`typescript-eslint`](https://typescript-eslint.io) in your project.
+| Path                | Trang         | Mô tả                                    |
+|---------------------|---------------|------------------------------------------|
+| `/chart/:ticker`    | ChartPage     | Nến + dự báo H=1..5 + attention          |
+| `/info/:ticker`     | ProfilePage   | Hồ sơ ngân hàng & chỉ số cơ bản         |
+| `/news/:ticker?`    | NewsPage      | Tin tức tổng hợp theo mã                 |
+| `/about`            | AboutPage     | Giới thiệu hệ thống                      |
+
+## Lệnh phát triển
+
+```bash
+npm install        # cài deps
+npm run dev        # dev server (http://localhost:5173)
+npm run build      # production build (kèm text-integrity check)
+npm run preview    # preview bản build
+```
+
+## Kết nối backend
+
+Frontend gọi API tại `http://localhost:8000` (FastAPI). Cấu hình base URL ở `src/api/index.js` nếu deploy khác domain.
