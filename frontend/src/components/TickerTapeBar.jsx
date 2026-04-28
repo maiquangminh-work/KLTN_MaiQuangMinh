@@ -1,28 +1,44 @@
 ﻿const COPY = {
   vi: {
-    loading: 'Đang đồng bộ nhanh bảng giá...',
+    loading: 'Đang đồng bộ dữ liệu thị trường...',
     current: 'Giá',
     delta: 'Biến động',
     score: 'Điểm',
     trend: '7 ngày',
-    pending: 'Đang tải',
-    pendingValue: 'Đang chờ dữ liệu',
+    pending: 'Đồng bộ',
+    pendingValue: 'Đang cập nhật',
+    currency: 'VNĐ',
+    recommendations: {
+      positive: 'Khả quan',
+      neutral: 'Trung lập',
+      negative: 'Kém khả quan',
+      loading: 'Đang tải',
+    },
   },
   en: {
-    loading: 'Syncing quick market strip...',
+    loading: 'Syncing market data...',
     current: 'Price',
     delta: 'Delta',
     score: 'Score',
     trend: '7D',
-    pending: 'Loading',
-    pendingValue: 'Waiting for data',
+    pending: 'Syncing',
+    pendingValue: 'Updating',
+    currency: 'VND',
+    recommendations: {
+      positive: 'Outperform',
+      neutral: 'Neutral',
+      negative: 'Underperform',
+      loading: 'Updating',
+    },
   },
 };
 
+const TAPE_FONT = '"Segoe UI Variable", "Segoe UI", Arial, sans-serif';
+
 function Sparkline({ points = [], color }) {
   const safePoints = points.length >= 2 ? points : [0, 1];
-  const width = 92;
-  const height = 34;
+  const width = 64;
+  const height = 22;
   const min = Math.min(...safePoints);
   const max = Math.max(...safePoints);
   const range = max - min || 1;
@@ -64,10 +80,13 @@ function TickerTapeBar({
     <div
       className="card"
       style={{
-        margin: '0 20px 16px',
-        padding: '10px 14px',
+        margin: '0 18px 12px',
+        padding: '8px 10px',
         display: 'grid',
-        gap: '10px',
+        gap: '6px',
+        overflow: 'hidden',
+        fontFamily: TAPE_FONT,
+        letterSpacing: '0',
       }}
     >
       {loading && (
@@ -78,64 +97,117 @@ function TickerTapeBar({
 
       <div
         style={{
-          display: 'grid',
-          gridTemplateColumns: 'repeat(3, minmax(0, 1fr))',
-          gap: '12px',
+          display: 'flex',
+          flexWrap: 'nowrap',
+          gap: '8px',
+          overflowX: 'auto',
+          overflowY: 'hidden',
+          paddingBottom: '2px',
+          scrollbarWidth: 'thin',
+          WebkitOverflowScrolling: 'touch',
         }}
       >
-        {items.map((item) => (
-          <button
-            key={item.ticker}
-            type="button"
-            onClick={() => onSelectTicker(item.ticker)}
-            style={{
-              width: '100%',
-              borderRadius: '12px',
+        {items.map((item) => {
+          const recommendationLabel = item.isPending
+            ? copy.pending
+            : copy.recommendations[item.recommendationTone] || item.recommendation;
+
+          return (
+            <button
+              key={item.ticker}
+              type="button"
+              onClick={() => onSelectTicker(item.ticker)}
+              style={{
+              flex: '0 0 clamp(182px, calc((100vw - 126px) / 10), 214px)',
+              minWidth: '182px',
+              height: '82px',
+              borderRadius: '8px',
               border: `1px solid ${item.ticker === activeTicker ? item.color : 'var(--border-color)'}`,
               background: item.ticker === activeTicker ? `${item.color}14` : 'var(--bg-elevated)',
-              padding: '10px 12px',
+              padding: '8px 10px 7px',
               display: 'grid',
-              gridTemplateColumns: 'auto 1fr auto',
-              gap: '12px',
-              alignItems: 'center',
+              gridTemplateRows: '32px 31px',
+              gap: '5px',
               textAlign: 'left',
               cursor: 'pointer',
-            }}
-          >
-            <div style={{ display: 'grid', gap: '4px', minWidth: '70px' }}>
-              <strong style={{ color: 'var(--text-strong)', fontSize: '17px', lineHeight: 1.1 }}>{item.ticker}</strong>
-              <span style={{ color: item.color, fontSize: '12px', fontWeight: 700 }}>
-                {item.isPending ? copy.pending : item.recommendation}
-              </span>
-            </div>
-
-            <div style={{ display: 'grid', gap: '5px', minWidth: 0 }}>
-              <div style={{ display: 'flex', justifyContent: 'space-between', gap: '10px', fontSize: '12px', color: 'var(--text-secondary)' }}>
-                <span>{copy.current}</span>
-                <span style={{ color: 'var(--text-primary)', fontWeight: 700 }}>
-                  {item.currentPrice != null ? `${formatVND(item.currentPrice * 1000)} VNĐ` : copy.pendingValue}
+              overflow: 'hidden',
+              fontFamily: 'inherit',
+              letterSpacing: '0',
+              }}
+            >
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: '8px', minWidth: 0 }}>
+              <div style={{ display: 'grid', gap: '2px', minWidth: 0 }}>
+                <strong style={{ color: 'var(--text-strong)', fontSize: '15px', fontWeight: 800, lineHeight: 1, letterSpacing: '0' }}>{item.ticker}</strong>
+                <span
+                  style={{
+                    color: item.color,
+                    fontSize: '11px',
+                    fontWeight: 800,
+                    lineHeight: 1.35,
+                    whiteSpace: 'nowrap',
+                    overflow: 'hidden',
+                    textOverflow: 'ellipsis',
+                    maxWidth: '104px',
+                    letterSpacing: '0',
+                  }}
+                  title={recommendationLabel}
+                >
+                  {recommendationLabel}
                 </span>
               </div>
-              <div style={{ display: 'flex', justifyContent: 'space-between', gap: '10px', fontSize: '12px', color: 'var(--text-secondary)' }}>
-                <span>{copy.delta}</span>
-                <span style={{ color: item.deltaPercent == null ? 'var(--text-muted)' : item.deltaPercent >= 0 ? 'var(--accent-green)' : 'var(--accent-red)', fontWeight: 700 }}>
+              <div style={{ display: 'grid', gap: '2px', justifyItems: 'end', minWidth: 0 }}>
+                <span
+                  style={{
+                    color: 'var(--text-primary)',
+                    fontSize: '11px',
+                    fontWeight: 700,
+                    lineHeight: 1.05,
+                    whiteSpace: 'nowrap',
+                    overflow: 'hidden',
+                    textOverflow: 'ellipsis',
+                    maxWidth: '104px',
+                    fontVariantNumeric: 'tabular-nums',
+                    letterSpacing: '0',
+                  }}
+                  title={item.currentPrice != null ? `${formatVND(item.currentPrice * 1000)} ${copy.currency}` : copy.pendingValue}
+                >
+                  {item.currentPrice != null ? `${formatVND(item.currentPrice * 1000)} ${copy.currency}` : copy.pendingValue}
+                </span>
+                <span style={{ color: item.deltaPercent == null ? 'var(--text-muted)' : item.deltaPercent >= 0 ? 'var(--accent-green)' : 'var(--accent-red)', fontSize: '11px', fontWeight: 700, lineHeight: 1, fontVariantNumeric: 'tabular-nums', letterSpacing: '0' }}>
                   {item.deltaPercent == null ? '—' : `${item.deltaPercent >= 0 ? '+' : ''}${formatPercent(item.deltaPercent, 2)}`}
                 </span>
               </div>
-              <div style={{ display: 'flex', justifyContent: 'space-between', gap: '10px', fontSize: '12px', color: 'var(--text-secondary)' }}>
-                <span>{copy.score}</span>
-                <span style={{ color: 'var(--text-primary)', fontWeight: 700 }}>{Math.round(item.score)}/100</span>
-              </div>
             </div>
 
-            <div style={{ display: 'grid', justifyItems: 'end', gap: '4px', minWidth: '92px' }}>
-              <span style={{ color: 'var(--text-muted)', fontSize: '10px', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.8px' }}>
-                {copy.trend}
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'end', gap: '8px', minWidth: 0 }}>
+              <span
+                style={{
+                  color: 'var(--text-primary)',
+                  background: 'rgba(255, 255, 255, 0.04)',
+                  border: '1px solid var(--border-color)',
+                  borderRadius: '6px',
+                  padding: '3px 6px',
+                  fontSize: '11px',
+                  fontWeight: 800,
+                  lineHeight: 1,
+                  whiteSpace: 'nowrap',
+                  fontVariantNumeric: 'tabular-nums',
+                  letterSpacing: '0',
+                }}
+                title={`${copy.score}: ${Math.round(item.score)}/100`}
+              >
+                {Math.round(item.score)}/100
               </span>
-              <Sparkline points={item.sparkline} color={item.color} />
+              <div style={{ display: 'grid', justifyItems: 'end', gap: '0', minWidth: '64px' }}>
+                <span style={{ color: 'var(--text-muted)', fontSize: '9px', fontWeight: 700, lineHeight: 1, textTransform: 'uppercase', whiteSpace: 'nowrap', letterSpacing: '0' }}>
+                  {copy.trend}
+                </span>
+                <Sparkline points={item.sparkline} color={item.color} />
+              </div>
             </div>
-          </button>
-        ))}
+            </button>
+          );
+        })}
       </div>
     </div>
   );

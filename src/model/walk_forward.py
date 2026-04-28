@@ -239,9 +239,9 @@ def walk_forward_ticker(ticker: str, n_windows: int = 8,
         if test_end > total:
             break
 
-        print(f"\n═══ {ticker} Window {w+1}/{n_windows} "
+        print(f"\n--- {ticker} Window {w+1}/{n_windows} "
               f"[{start}:{train_end}] train | [{train_end}:{val_end}] val | "
-              f"[{val_end}:{test_end}] test ═══")
+              f"[{val_end}:{test_end}] test ---")
 
         train_data = data_values[start:train_end]
         train_target = target_values[start:train_end]
@@ -393,7 +393,7 @@ def summarize(df: pd.DataFrame, ticker: str) -> dict:
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument('--tickers', nargs='*', default=['VCB', 'MBB', 'BID'])
+    ap.add_argument('--tickers', nargs='*', default=['VCB', 'BID', 'CTG'])
     ap.add_argument('--n_windows', type=int, default=8)
     ap.add_argument('--epochs', type=int, default=50)
     ap.add_argument('--patience', type=int, default=15)
@@ -412,9 +412,9 @@ def main():
     all_windows = []
 
     for tk in args.tickers:
-        print("\n" + "█" * 90)
+        print("\n" + "=" * 90)
         print(f"  WALK-FORWARD {tk}")
-        print("█" * 90)
+        print("=" * 90)
         try:
             df_windows = walk_forward_ticker(
                 tk, n_windows=args.n_windows, epochs=args.epochs,

@@ -1,6 +1,6 @@
 const COPY = {
   vi: {
-    brand: 'FinSight Banking AI',
+    brand: 'MinSight Banking AI',
     summary: 'Nền tảng theo dõi triển vọng cổ phiếu ngân hàng.',
     quickLinks: 'Điều hướng nhanh',
     platform: 'Nền tảng',
@@ -8,7 +8,6 @@ const COPY = {
     chart: 'Biểu đồ kỹ thuật',
     info: 'Thông tin cơ bản',
     news: 'Tin tức thị trường',
-    model: 'Hiệu suất AI',
     about: 'Về chúng tôi',
     methodology: 'Phương pháp đánh giá',
     dataSources: 'Nguồn dữ liệu',
@@ -18,7 +17,7 @@ const COPY = {
     rights: 'Hỗ trợ đọc triển vọng, tin tức và hồ sơ doanh nghiệp.',
   },
   en: {
-    brand: 'FinSight Banking AI',
+    brand: 'MinSight Banking AI',
     summary: 'A platform for reading banking-stock outlook faster.',
     quickLinks: 'Quick links',
     platform: 'Platform',
@@ -26,7 +25,6 @@ const COPY = {
     chart: 'Technical view',
     info: 'Company profile',
     news: 'Market news',
-    model: 'AI Performance',
     about: 'About us',
     methodology: 'Methodology',
     dataSources: 'Data sources',
@@ -37,7 +35,7 @@ const COPY = {
   },
 };
 
-function FooterSectionV2({ language, onOpenChart, onOpenInfo, onOpenNews, onOpenAbout, onOpenModel }) {
+function FooterSectionV2({ language, onOpenChart, onOpenInfo, onOpenNews, onOpenAbout }) {
   const copy = COPY[language] || COPY.vi;
 
   return (
@@ -55,10 +53,18 @@ function FooterSectionV2({ language, onOpenChart, onOpenInfo, onOpenNews, onOpen
 
         <div className="site-footer__column">
           <span className="site-footer__title">{copy.quickLinks}</span>
-          <button type="button" className="site-footer__link" onClick={onOpenChart}>{copy.chart}</button>
-          <button type="button" className="site-footer__link" onClick={onOpenInfo}>{copy.info}</button>
-          <button type="button" className="site-footer__link" onClick={onOpenNews}>{copy.news}</button>
-          <button type="button" className="site-footer__link" onClick={onOpenAbout}>{copy.about}</button>
+          <button type="button" className="site-footer__link" onClick={onOpenChart}>
+            {copy.chart}
+          </button>
+          <button type="button" className="site-footer__link" onClick={onOpenInfo}>
+            {copy.info}
+          </button>
+          <button type="button" className="site-footer__link" onClick={onOpenNews}>
+            {copy.news}
+          </button>
+          <button type="button" className="site-footer__link" onClick={onOpenAbout}>
+            {copy.about}
+          </button>
         </div>
 
         <div className="site-footer__column">
@@ -75,7 +81,7 @@ function FooterSectionV2({ language, onOpenChart, onOpenInfo, onOpenNews, onOpen
       </div>
 
       <div className="site-footer__bottom">
-        <span>© 2026 FinSight Banking AI</span>
+        <span>© 2026 MinSight Banking AI</span>
         <span>{copy.rights}</span>
       </div>
     </footer>

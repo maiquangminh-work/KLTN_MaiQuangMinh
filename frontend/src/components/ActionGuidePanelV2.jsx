@@ -1,94 +1,113 @@
-function ActionGuidePanelV2({ recColor, actionPlan, decisionGuidance, technicalReferences }) {
+function ActionGuidePanelV2({ recColor, actionPlan, decisionGuidance, technicalReferences, language = 'vi' }) {
+  const copy = language === 'en'
+    ? {
+        title: 'Short-term watch plan',
+        watchRange: 'Watch range',
+        targetLevel: 'Expected scenario',
+        guardrailLevel: 'Risk scenario',
+        guidanceTitle: 'If this is your current position',
+        reasonTitle: '3 key reasons',
+        referencesTitle: 'References to read next',
+        openSource: 'Open source',
+        noPreview: 'No preview image',
+        readArticle: 'Read article',
+        footer: 'Start with the watch range and probability scenarios above. Reassess when the setup changes clearly or the defensive scenario is triggered.',
+      }
+    : {
+        title: 'K\u1ebf ho\u1ea1ch theo d\u00f5i ng\u1eafn h\u1ea1n',
+        watchRange: 'V\u00f9ng quan s\u00e1t',
+        targetLevel: 'K\u1ecbch b\u1ea3n k\u1ef3 v\u1ecdng',
+        guardrailLevel: 'K\u1ecbch b\u1ea3n r\u1ee7i ro',
+        guidanceTitle: 'N\u1ebfu b\u1ea1n \u0111ang \u1edf t\u00ecnh hu\u1ed1ng n\u00e0y',
+        reasonTitle: '3 l\u00fd do n\u1ed5i b\u1eadt',
+        referencesTitle: 'Ngu\u1ed3n tham chi\u1ebfu \u0111\u1ec3 \u0111\u1ecdc th\u00eam',
+        openSource: 'M\u1edf ngu\u1ed3n',
+        noPreview: 'Ch\u01b0a c\u00f3 \u1ea3nh xem tr\u01b0\u1edbc',
+        readArticle: '\u0110\u1ecdc b\u00e0i',
+        footer: 'H\u00e3y \u01b0u ti\u00ean v\u00f9ng quan s\u00e1t v\u00e0 c\u00e1c k\u1ecbch b\u1ea3n x\u00e1c su\u1ea5t ph\u00eda tr\u00ean. Ch\u1ec9 \u0111\u00e1nh gi\u00e1 l\u1ea1i khi thi\u1ebft l\u1eadp thay \u0111\u1ed5i r\u00f5 ho\u1eb7c k\u1ecbch b\u1ea3n r\u1ee7i ro b\u1ecb k\u00edch ho\u1ea1t.',
+      };
+
   const officialReferences = (technicalReferences || []).filter((item) => item.kind === 'official');
   const articleReferences = (technicalReferences || []).filter((item) => item.kind === 'article');
 
   return (
-    <div className="card" style={{ padding: '16px 18px', border: `1px solid ${recColor}` }}>
-      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '10px', flexWrap: 'wrap', marginBottom: '10px' }}>
-        <h3 style={{ margin: 0, color: 'var(--text-primary)' }}>Kế hoạch theo dõi ngắn hạn</h3>
-        <span style={{ padding: '6px 10px', borderRadius: '999px', background: `${recColor}22`, color: recColor, fontWeight: 700, fontSize: '12px' }}>
-          {actionPlan.riskLabel}
-        </span>
+    <div className="card action-plan-card" style={{ '--plan-color': recColor, borderColor: recColor }}>
+      <div className="action-plan-hero">
+        <div className="action-plan-topline">
+          <div>
+            <span className="action-plan-kicker">{copy.title}</span>
+            <h3>{actionPlan.actionTitle}</h3>
+          </div>
+          <span className="action-plan-risk-pill">
+            {language === 'en' ? 'Risk' : 'R\u1ee7i ro'}: {actionPlan.riskLabel}
+          </span>
+        </div>
+
+        <p className="action-plan-subtitle">{actionPlan.actionSubtitle}</p>
+
+        <div className="action-plan-scenario-grid">
+          <div className="action-plan-scenario-card watch">
+            <span>{copy.watchRange}</span>
+            <strong>{actionPlan.actionRange}</strong>
+          </div>
+          <div className="action-plan-scenario-card target">
+            <span>{copy.targetLevel}</span>
+            <strong>{actionPlan.targetLabel}</strong>
+          </div>
+          <div className="action-plan-scenario-card guardrail">
+            <span>{copy.guardrailLevel}</span>
+            <strong>{actionPlan.guardrailLabel}</strong>
+          </div>
+        </div>
       </div>
 
-      <div style={{ fontSize: '24px', fontWeight: 800, color: recColor, letterSpacing: '1px', marginBottom: '6px' }}>
-        {actionPlan.actionTitle}
-      </div>
-      <div style={{ fontSize: '13px', color: 'var(--text-muted)', lineHeight: 1.7, marginBottom: '14px' }}>
-        {actionPlan.actionSubtitle}
-      </div>
+      <div className="action-plan-body">
+        {!!decisionGuidance?.length && (
+          <div className="action-plan-section action-plan-guidance">
+            <div className="action-plan-section-title">{copy.guidanceTitle}</div>
+            <div className="action-plan-guidance-grid">
+              {decisionGuidance.map((item) => (
+                <div key={item.label} className="action-plan-guidance-card">
+                  <span>{item.label}</span>
+                  <p>{item.value}</p>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
 
-      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: '10px' }}>
-        <div style={{ background: 'var(--bg-elevated)', border: '1px solid var(--border-color)', borderRadius: '10px', padding: '12px' }}>
-          <div style={{ color: 'var(--text-secondary)', fontSize: '12px', marginBottom: '4px' }}>Vùng quan sát</div>
-          <div style={{ fontSize: '16px', fontWeight: 700, color: 'var(--text-primary)' }}>{actionPlan.actionRange}</div>
-        </div>
-        <div style={{ background: 'var(--bg-elevated)', border: '1px solid var(--border-color)', borderRadius: '10px', padding: '12px' }}>
-          <div style={{ color: 'var(--text-secondary)', fontSize: '12px', marginBottom: '4px' }}>Mốc kỳ vọng</div>
-          <div style={{ fontSize: '16px', fontWeight: 700, color: 'var(--accent-green)' }}>{actionPlan.targetLabel}</div>
-        </div>
-        <div style={{ background: 'var(--bg-elevated)', border: '1px solid var(--border-color)', borderRadius: '10px', padding: '12px' }}>
-          <div style={{ color: 'var(--text-secondary)', fontSize: '12px', marginBottom: '4px' }}>Mốc phòng thủ</div>
-          <div style={{ fontSize: '16px', fontWeight: 700, color: 'var(--accent-red)' }}>{actionPlan.guardrailLabel}</div>
-        </div>
-      </div>
-
-      {!!decisionGuidance?.length && (
-        <div style={{ marginTop: '14px' }}>
-          <div style={{ color: 'var(--text-secondary)', fontSize: '12px', marginBottom: '8px' }}>Nếu bạn đang ở tình huống này</div>
-          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: '10px' }}>
-            {decisionGuidance.map((item) => (
-              <div key={item.label} style={{ background: 'var(--bg-elevated)', border: '1px solid var(--border-color)', borderRadius: '10px', padding: '12px' }}>
-                <div style={{ color: 'var(--text-primary)', fontSize: '13px', fontWeight: 700, marginBottom: '6px' }}>{item.label}</div>
-                <div style={{ color: 'var(--text-muted)', fontSize: '13px', lineHeight: 1.65 }}>{item.value}</div>
+        <div className="action-plan-section action-plan-reasons">
+          <div className="action-plan-section-title">{copy.reasonTitle}</div>
+          <div className="action-plan-reason-list">
+            {actionPlan.reasons.map((reason, index) => (
+              <div key={`${reason}-${index}`} className="action-plan-reason-item">
+                <span>{index + 1}</span>
+                <p>{reason}</p>
               </div>
             ))}
           </div>
         </div>
-      )}
-
-      <div style={{ marginTop: '14px', background: 'var(--bg-elevated)', border: '1px solid var(--border-color)', borderRadius: '10px', padding: '12px' }}>
-        <div style={{ color: 'var(--text-secondary)', fontSize: '12px', marginBottom: '8px' }}>3 lý do nổi bật</div>
-        <div style={{ display: 'grid', gap: '8px' }}>
-          {actionPlan.reasons.map((reason, index) => (
-            <div key={`${reason}-${index}`} style={{ display: 'flex', gap: '10px', alignItems: 'flex-start' }}>
-              <span style={{ minWidth: '24px', height: '24px', borderRadius: '999px', background: `${recColor}22`, color: recColor, display: 'inline-flex', alignItems: 'center', justifyContent: 'center', fontWeight: 700, fontSize: '12px' }}>
-                {index + 1}
-              </span>
-              <span style={{ color: 'var(--text-muted)', fontSize: '13px', lineHeight: 1.6 }}>{reason}</span>
-            </div>
-          ))}
-        </div>
       </div>
 
       {(officialReferences.length > 0 || articleReferences.length > 0) && (
-        <div style={{ marginTop: '14px', background: 'var(--bg-elevated)', border: '1px solid var(--border-color)', borderRadius: '10px', padding: '12px' }}>
-          <div style={{ color: 'var(--text-secondary)', fontSize: '12px', marginBottom: '10px' }}>Nguồn tham chiếu để đọc thêm</div>
+        <div className="action-plan-references">
+          <div className="action-plan-section-title">{copy.referencesTitle}</div>
 
           {!!officialReferences.length && (
-            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(240px, 1fr))', gap: '10px', marginBottom: articleReferences.length ? '12px' : 0 }}>
+            <div className="action-plan-official-grid">
               {officialReferences.map((reference) => (
                 <a
                   key={`${reference.label}-${reference.href}`}
                   href={reference.href}
                   target="_blank"
                   rel="noopener noreferrer"
-                  style={{
-                    textDecoration: 'none',
-                    background: 'var(--bg-soft)',
-                    border: '1px solid var(--border-color)',
-                    borderRadius: '10px',
-                    padding: '12px 14px',
-                    display: 'grid',
-                    gap: '4px',
-                  }}
+                  className="action-plan-reference-link"
                 >
-                  <div style={{ display: 'flex', justifyContent: 'space-between', gap: '10px', flexWrap: 'wrap' }}>
-                    <span style={{ color: 'var(--accent-yellow)', fontSize: '12px', fontWeight: 700 }}>{reference.label}</span>
-                    <span style={{ color: 'var(--text-secondary)', fontSize: '12px' }}>Mở nguồn ↗</span>
+                  <div>
+                    <span>{reference.label}</span>
+                    <strong>{reference.title}</strong>
                   </div>
-                  <div style={{ color: 'var(--text-strong)', fontWeight: 700, lineHeight: 1.55 }}>{reference.title}</div>
-                  <div style={{ color: 'var(--text-muted)', fontSize: '12px', lineHeight: 1.55 }}>{reference.note}</div>
+                  <small>{copy.openSource}</small>
                 </a>
               ))}
             </div>
@@ -108,13 +127,13 @@ function ActionGuidePanelV2({ recColor, actionPlan, decisionGuidance, technicalR
                     <img src={reference.image_url} alt={reference.title} className="reference-article-image" />
                   ) : (
                     <div className="reference-article-image placeholder">
-                      Chưa có ảnh xem trước
+                      {copy.noPreview}
                     </div>
                   )}
 
                   <div className="reference-article-meta">
                     <span>{reference.label}</span>
-                    <span>Đọc bài ↗</span>
+                    <span>{copy.readArticle}</span>
                   </div>
                   <div className="reference-article-title">{reference.title}</div>
                   <div className="reference-article-note">{reference.note}</div>
@@ -125,8 +144,8 @@ function ActionGuidePanelV2({ recColor, actionPlan, decisionGuidance, technicalR
         </div>
       )}
 
-      <div style={{ marginTop: '12px', fontSize: '12px', color: 'var(--text-muted)', lineHeight: 1.6 }}>
-        Hãy ưu tiên 3 mốc trên trước. Chỉ khi giá tiến sát mốc kỳ vọng hoặc xuyên xuống mốc phòng thủ thì mới cần đánh giá lại quyết định.
+      <div className="action-plan-footer">
+        {copy.footer}
       </div>
     </div>
   );

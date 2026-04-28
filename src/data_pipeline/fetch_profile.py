@@ -6,7 +6,7 @@ sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '../../'
 from src.backend.database import SessionLocal, CompanyProfile
 from vnstock import Vnstock
 
-TICKERS = ['VCB', 'BID', 'CTG']
+TICKERS = ['VCB', 'BID', 'CTG', 'MBB', 'TCB', 'VPB', 'ACB', 'HDB', 'SHB', 'VIB']
 
 # Thông tin cơ bản
 STATIC_INFO = {
@@ -24,7 +24,42 @@ STATIC_INFO = {
         'name': 'Ngân hàng Thương mại cổ phần Công thương Việt Nam',
         'first_listed_shares': '121,211,780',
         'logo': 'https://cdn.haitrieu.com/wp-content/uploads/2022/01/Logo-VietinBank-CTG-Slo.png'
-    }
+    },
+    'MBB': {
+        'name': 'Ngân hàng Thương mại cổ phần Quân đội',
+        'first_listed_shares': '100,000,000',
+        'logo': 'https://cdn.haitrieu.com/wp-content/uploads/2022/01/Logo-MB-Bank-MBB.png'
+    },
+    'TCB': {
+        'name': 'Ngân hàng Thương mại cổ phần Kỹ thương Việt Nam',
+        'first_listed_shares': '350,000,000',
+        'logo': 'https://cdn.haitrieu.com/wp-content/uploads/2022/02/Logo-Techcombank-Ori.png'
+    },
+    'VPB': {
+        'name': 'Ngân hàng Thương mại cổ phần Việt Nam Thịnh Vượng',
+        'first_listed_shares': '1,330,000,000',
+        'logo': 'https://cdn.haitrieu.com/wp-content/uploads/2022/01/Logo-VPBank.png'
+    },
+    'ACB': {
+        'name': 'Ngân hàng Thương mại cổ phần Á Châu',
+        'first_listed_shares': '110,000,000',
+        'logo': 'https://cdn.haitrieu.com/wp-content/uploads/2022/01/Logo-ACB.png'
+    },
+    'HDB': {
+        'name': 'Ngân hàng Thương mại cổ phần Phát triển TP. Hồ Chí Minh',
+        'first_listed_shares': '98,100,000',
+        'logo': 'https://cdn.haitrieu.com/wp-content/uploads/2022/01/Logo-HDBank.png'
+    },
+    'SHB': {
+        'name': 'Ngân hàng Thương mại cổ phần Sài Gòn - Hà Nội',
+        'first_listed_shares': '500,000,000',
+        'logo': 'https://cdn.haitrieu.com/wp-content/uploads/2022/01/Logo-SHB.png'
+    },
+    'VIB': {
+        'name': 'Ngân hàng Thương mại cổ phần Quốc tế Việt Nam',
+        'first_listed_shares': '188,500,000',
+        'logo': 'https://cdn.haitrieu.com/wp-content/uploads/2022/01/Logo-VIB.png'
+    },
 }
 
 def fetch_company_profiles():

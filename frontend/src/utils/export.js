@@ -1,7 +1,7 @@
-/**
- * Export utilities for FinSight Banking AI.
+﻿/**
+ * Export utilities for MinSight Banking AI.
  *
- * Provides functions to export chart data and prediction reports as CSV files
+ * Provides functions to export chart data and AI trend reports as CSV files
  * with UTF-8 BOM encoding for Excel compatibility.
  */
 
@@ -95,16 +95,16 @@ export function exportChartDataCSV(ticker, chartData) {
 }
 
 /**
- * Export a full prediction report as a CSV file.
+ * Export a full AI trend report as a CSV file.
  *
  * The report contains two sections separated by a blank row:
- *   1. **Prediction Summary** -- ticker, date, current price, each predicted
- *      price/date, recommendation text, and confidence scores.
+ *   1. **Trend Signal Summary** -- ticker, date, current price, trend
+ *      probabilities, recommendation text, and confidence scores.
  *   2. **Recent Price History** -- the last 30 days of OHLCV + RSI data taken
  *      from `data.chart_data`.
  *
- * Prices coming from the API (`current_price`, `predicted_price`) are in
- * *thousands* of VND and are multiplied by 1 000 before writing.
+ * Prices coming from the API (`current_price`, legacy `predicted_price`) are
+ * in *thousands* of VND and are multiplied by 1 000 before writing.
  * Prices in `chart_data` are already in VND.
  *
  * @param {string} ticker - Stock ticker symbol.
@@ -130,18 +130,38 @@ export function exportPredictionReportCSV(ticker, data) {
 
   const lines = [];
 
-  // ── Section 1: Prediction Summary ──────────────────────────────────────
-  lines.push('PREDICTION SUMMARY');
+  // Section 1: Trend Signal Summary
+  lines.push('TREND SIGNAL SUMMARY');
   lines.push(`Ticker,${csvEscape(ticker)}`);
   lines.push(`Report Date,${csvEscape(todayStamp())}`);
   lines.push(
     `Current Price (VND),${csvEscape(Math.round(data.current_price * 1000))}`,
   );
 
-  if (data.predictions && data.predictions.length > 0) {
+  const probabilityForecast = data.probability_forecast || {};
+  const probabilitySource = probabilityForecast.probabilities || {};
+  const pOutperform = probabilityForecast.outperform_probability ?? probabilitySource.outperform;
+  const pNeutral = probabilityForecast.neutral_probability ?? probabilitySource.neutral;
+  const pUnderperform = probabilityForecast.underperform_probability ?? probabilitySource.underperform;
+  const alphaEdge = probabilityForecast.alpha_edge;
+  const isProbabilityMode = data.prediction_mode === 'alpha_probability'
+    || [pOutperform, pNeutral, pUnderperform].some((value) => Number.isFinite(Number(value)));
+
+  if (isProbabilityMode) {
     lines.push('');
-    lines.push('Predicted Prices');
-    lines.push('Date,Predicted Price (VND)');
+    lines.push('Trend Probabilities');
+    lines.push('Horizon,Outperform,Neutral,Underperform,Alpha Edge');
+    lines.push([
+      probabilityForecast.horizon_label || `T+${probabilityForecast.horizon_days || 5}`,
+      pOutperform != null ? `${(Number(pOutperform) * 100).toFixed(2)}%` : '',
+      pNeutral != null ? `${(Number(pNeutral) * 100).toFixed(2)}%` : '',
+      pUnderperform != null ? `${(Number(pUnderperform) * 100).toFixed(2)}%` : '',
+      alphaEdge != null ? `${(Number(alphaEdge) * 100).toFixed(2)}%` : '',
+    ].map(csvEscape).join(','));
+  } else if (data.predictions && data.predictions.length > 0) {
+    lines.push('');
+    lines.push('Legacy Trend Proxy');
+    lines.push('Date,Legacy Price Path (VND)');
     data.predictions.forEach((p) => {
       lines.push(
         `${csvEscape(p.date)},${csvEscape(Math.round(p.predicted_price * 1000))}`,
@@ -168,7 +188,7 @@ export function exportPredictionReportCSV(ticker, data) {
     )}`,
   );
 
-  // ── Section 2: Recent Price History (last 30 days) ─────────────────────
+  // Section 2: Recent Price History (last 30 days)
   if (data.chart_data && data.chart_data.length > 0) {
     const recent = data.chart_data.slice(-30);
 
@@ -194,6 +214,6 @@ export function exportPredictionReportCSV(ticker, data) {
   }
 
   const csv = '\uFEFF' + lines.join('\r\n');
-  const filename = `${ticker}_prediction_report_${todayStamp()}.csv`;
+  const filename = `${ticker}_trend_report_${todayStamp()}.csv`;
   triggerDownload(csv, filename);
 }

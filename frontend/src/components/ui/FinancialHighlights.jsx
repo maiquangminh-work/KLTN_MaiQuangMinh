@@ -1,4 +1,3 @@
-import { useMemo } from 'react';
 import { BANK_FINANCIAL_DATA } from '../../utils/constants';
 
 const COPY = {
@@ -75,27 +74,6 @@ export default function FinancialHighlights({ ticker, language, isLightTheme }) 
   const copy = COPY[language] || COPY.vi;
   const fd = BANK_FINANCIAL_DATA[ticker];
 
-  const metrics = useMemo(() => {
-    if (!fd) return [];
-    const fmt = (v, suffix) => `${v.toLocaleString()}${suffix}`;
-    const fmtCap = (v) => v >= 1000 ? `${(v / 1000).toFixed(0)} ${copy.unit.trillion}` : `${v} ${copy.unit.billion}`;
-
-    return [
-      { label: copy.pe, value: fd.pe.toFixed(1), spark: null, accent: fd.pe < 12 ? 'green' : fd.pe > 16 ? 'red' : 'yellow' },
-      { label: copy.pb, value: fd.pb.toFixed(2), spark: null, accent: fd.pb < 2 ? 'green' : fd.pb > 3 ? 'red' : 'yellow' },
-      { label: copy.roe, value: fmt(fd.roe, '%'), spark: fd.yearlyMetrics?.map((m) => m.roe), accent: 'green' },
-      { label: copy.roa, value: fmt(fd.roa, '%'), spark: fd.yearlyMetrics?.map((m) => m.roa), accent: 'green' },
-      { label: copy.nim, value: fmt(fd.nim, '%'), spark: fd.yearlyMetrics?.map((m) => m.nim), accent: 'green' },
-      { label: copy.eps, value: `${fd.eps.toLocaleString()}${copy.unit.vnd}`, spark: null, accent: 'blue' },
-      { label: copy.marketCap, value: fmtCap(fd.marketCap), spark: null, accent: 'blue' },
-      { label: copy.totalAssets, value: fmtCap(fd.totalAssets), spark: null, accent: 'blue' },
-      { label: copy.npl, value: fmt(fd.nplRatio, '%'), spark: fd.yearlyMetrics?.map((m) => m.npl), accent: fd.nplRatio < 1 ? 'green' : 'red' },
-      { label: copy.car, value: fmt(fd.carRatio, '%'), spark: null, accent: fd.carRatio >= 10 ? 'green' : 'red' },
-      { label: copy.loanGrowth, value: fmt(fd.loanGrowth, '%'), spark: null, accent: 'green' },
-      { label: copy.costToIncome, value: fmt(fd.costToIncome, '%'), spark: null, accent: fd.costToIncome < 35 ? 'green' : 'yellow' },
-    ];
-  }, [fd, language]);
-
   const accentColors = {
     green: '#0ecb81',
     red: '#f6465d',
@@ -104,6 +82,23 @@ export default function FinancialHighlights({ ticker, language, isLightTheme }) 
   };
 
   if (!fd) return null;
+
+  const fmt = (v, suffix) => `${v.toLocaleString()}${suffix}`;
+  const fmtCap = (v) => v >= 1000 ? `${(v / 1000).toFixed(0)} ${copy.unit.trillion}` : `${v} ${copy.unit.billion}`;
+  const metrics = [
+    { label: copy.pe, value: fd.pe.toFixed(1), spark: null, accent: fd.pe < 12 ? 'green' : fd.pe > 16 ? 'red' : 'yellow' },
+    { label: copy.pb, value: fd.pb.toFixed(2), spark: null, accent: fd.pb < 2 ? 'green' : fd.pb > 3 ? 'red' : 'yellow' },
+    { label: copy.roe, value: fmt(fd.roe, '%'), spark: fd.yearlyMetrics?.map((m) => m.roe), accent: 'green' },
+    { label: copy.roa, value: fmt(fd.roa, '%'), spark: fd.yearlyMetrics?.map((m) => m.roa), accent: 'green' },
+    { label: copy.nim, value: fmt(fd.nim, '%'), spark: fd.yearlyMetrics?.map((m) => m.nim), accent: 'green' },
+    { label: copy.eps, value: `${fd.eps.toLocaleString()}${copy.unit.vnd}`, spark: null, accent: 'blue' },
+    { label: copy.marketCap, value: fmtCap(fd.marketCap), spark: null, accent: 'blue' },
+    { label: copy.totalAssets, value: fmtCap(fd.totalAssets), spark: null, accent: 'blue' },
+    { label: copy.npl, value: fmt(fd.nplRatio, '%'), spark: fd.yearlyMetrics?.map((m) => m.npl), accent: fd.nplRatio < 1 ? 'green' : 'red' },
+    { label: copy.car, value: fmt(fd.carRatio, '%'), spark: null, accent: fd.carRatio >= 10 ? 'green' : 'red' },
+    { label: copy.loanGrowth, value: fmt(fd.loanGrowth, '%'), spark: null, accent: 'green' },
+    { label: copy.costToIncome, value: fmt(fd.costToIncome, '%'), spark: null, accent: fd.costToIncome < 35 ? 'green' : 'yellow' },
+  ];
 
   return (
     <div className={`fin-highlights ${isLightTheme ? 'light' : ''}`}>

@@ -41,6 +41,7 @@ logs/
 data/raw/
 data/processed/
 data/confidence_logs/
+data/quality_logs/
 data/database/*.db
 notebooks/*.db
 models/ablation/
@@ -55,3 +56,21 @@ models/*plot*.png
 Thumbs.db
 .idea/
 .vscode/
+
+# =========================
+# AI tooling artifacts (không commit)
+# =========================
+.claude/
+doc_render_initial/
+doc_render_trimmed/
+
+# =========================
+# Model binary files (quá lớn / không cần thiết trên GitHub)
+# =========================
+models/ensemble/
+models/walkforward_partial/
+
+# =========================
+# Temporary / intermediate outputs
+# =========================
+models/walkforward_partial/
