@@ -20,6 +20,10 @@ class StockPrice(Base):
     low = Column(Float)
     close = Column(Float)
     volume = Column(Integer)
+    foreign_buy_volume = Column(Integer, nullable=True)
+    foreign_sell_volume = Column(Integer, nullable=True)
+    foreign_net_volume = Column(Integer, nullable=True)
+    foreign_data_source = Column(String(50), nullable=True)
 
 class CompanyProfile(Base):
     __tablename__ = "company_profiles"
@@ -37,4 +41,28 @@ class CompanyProfile(Base):
     logo_url = Column(String(500))          
 
 Base.metadata.create_all(bind=engine)
+
+
+def ensure_optional_stock_price_columns():
+    optional_columns = {
+        "foreign_buy_volume": "INTEGER",
+        "foreign_sell_volume": "INTEGER",
+        "foreign_net_volume": "INTEGER",
+        "foreign_data_source": "VARCHAR(50)",
+    }
+
+    with engine.begin() as connection:
+        existing_columns = {
+            row[1]
+            for row in connection.exec_driver_sql("PRAGMA table_info(stock_prices)").fetchall()
+        }
+
+        for column_name, column_type in optional_columns.items():
+            if column_name not in existing_columns:
+                connection.exec_driver_sql(
+                    f"ALTER TABLE stock_prices ADD COLUMN {column_name} {column_type}"
+                )
+
+
+ensure_optional_stock_price_columns()
 

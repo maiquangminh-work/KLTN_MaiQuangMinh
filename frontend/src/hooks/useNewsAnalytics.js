@@ -1,5 +1,32 @@
 import { useMemo } from 'react';
-import { NEWS_BANK_ALIASES, TRACKED_NEWS_SOURCES } from '../utils/constants';
+import { NEWS_BANK_ALIASES } from '../utils/constants';
+
+const COPY = {
+  vi: {
+    relevanceVeryHigh: 'Rất cao',
+    relevanceHigh: 'Cao',
+    relevanceWatch: 'Theo dõi',
+    relevanceSector: 'Nền ngành',
+    allSector: 'Toàn ngành',
+    sameBankingGroup: 'Tin cùng nhóm ngân hàng',
+    marketBackground: 'Tin nền của thị trường',
+    priorityBy: 'Ưu tiên theo',
+    otherSource: 'Khác',
+    updating: 'Đang cập nhật',
+  },
+  en: {
+    relevanceVeryHigh: 'Very high',
+    relevanceHigh: 'High',
+    relevanceWatch: 'Watch',
+    relevanceSector: 'Sector context',
+    allSector: 'Sector-wide',
+    sameBankingGroup: 'Banking peer news',
+    marketBackground: 'Market background',
+    priorityBy: 'Prioritized by',
+    otherSource: 'Other',
+    updating: 'Updating',
+  },
+};
 
 export function useFilteredNews(newsData, searchQuery) {
   return useMemo(() => {
@@ -29,8 +56,9 @@ export function useFilteredNews(newsData, searchQuery) {
   }, [newsData, searchQuery]);
 }
 
-export function useNewsInsights(filteredNews, newsFocusTicker, searchQuery) {
+export function useNewsInsights(filteredNews, newsFocusTicker, searchQuery, language = 'vi') {
   return useMemo(() => {
+    const copy = COPY[language] || COPY.vi;
     const focusKeywords = newsFocusTicker === 'ALL' ? [] : NEWS_BANK_ALIASES[newsFocusTicker] || [];
     const normalizeText = (value) =>
       String(value || '')
@@ -38,10 +66,10 @@ export function useNewsInsights(filteredNews, newsFocusTicker, searchQuery) {
         .replace(/\s+/g, ' ')
         .trim();
     const scoreToRelevance = (score) => {
-      if (score >= 90) return { label: 'Rất cao', tone: 'high' };
-      if (score >= 55) return { label: 'Cao', tone: 'medium' };
-      if (score >= 30) return { label: 'Theo dõi', tone: 'base' };
-      return { label: 'Nền ngành', tone: 'base' };
+      if (score >= 90) return { label: copy.relevanceVeryHigh, tone: 'high' };
+      if (score >= 55) return { label: copy.relevanceHigh, tone: 'medium' };
+      if (score >= 30) return { label: copy.relevanceWatch, tone: 'base' };
+      return { label: copy.relevanceSector, tone: 'base' };
     };
 
     const enrichedArticles = filteredNews.map((article) => {
@@ -78,10 +106,10 @@ export function useNewsInsights(filteredNews, newsFocusTicker, searchQuery) {
         relevanceLabel: relevance.label,
         relevanceTone: relevance.tone,
         relevanceSummary: isTickerFocused
-          ? `Ưu tiên theo ${newsFocusTicker === 'ALL' ? 'Toàn ngành' : newsFocusTicker}`
+          ? `${copy.priorityBy} ${newsFocusTicker === 'ALL' ? copy.allSector : newsFocusTicker}`
           : isBankingRelated
-            ? 'Tin cùng nhóm ngân hàng'
-            : 'Tin nền của thị trường',
+            ? copy.sameBankingGroup
+            : copy.marketBackground,
       };
     });
 
@@ -94,15 +122,15 @@ export function useNewsInsights(filteredNews, newsFocusTicker, searchQuery) {
       newsFocusTicker === 'ALL' ? rankedArticles : rankedArticles.filter((a) => a.isTickerFocused);
 
     const sourceCounts = rankedArticles.reduce((acc, article) => {
-      const src = article.source || 'Khác';
+      const src = article.source || copy.otherSource;
       acc[src] = (acc[src] || 0) + 1;
       return acc;
     }, {});
 
-    const sourceChips = TRACKED_NEWS_SOURCES.map((src) => ({
-      sourceName: src,
-      count: sourceCounts[src] || 0,
-    })).filter((item) => item.count > 0);
+    const sourceChips = Object.entries(sourceCounts)
+      .map(([sourceName, count]) => ({ sourceName, count }))
+      .filter((item) => item.count > 0)
+      .sort((a, b) => b.count - a.count || a.sourceName.localeCompare(b.sourceName));
 
     const featuredArticle = tickerFocusedArticles[0] || rankedArticles[0] || null;
     const secondaryArticles = rankedArticles.filter((a) => a !== featuredArticle);
@@ -114,9 +142,9 @@ export function useNewsInsights(filteredNews, newsFocusTicker, searchQuery) {
       sourceChips,
       tickerFocusedCount: tickerFocusedArticles.length,
       priorityArticlesCount: rankedArticles.filter((a) => a.relevanceScore >= 55).length,
-      uniqueSourcesCount: TRACKED_NEWS_SOURCES.length,
-      activeSourcesCount: Object.keys(sourceCounts).length,
-      latestPublished: enrichedArticles[0]?.published || 'Đang cập nhật',
+      uniqueSourcesCount: sourceChips.length,
+      activeSourcesCount: sourceChips.length,
+      latestPublished: enrichedArticles[0]?.published || copy.updating,
     };
-  }, [filteredNews, newsFocusTicker, searchQuery]);
+  }, [filteredNews, newsFocusTicker, searchQuery, language]);
 }

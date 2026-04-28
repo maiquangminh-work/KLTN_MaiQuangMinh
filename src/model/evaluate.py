@@ -1,5 +1,8 @@
 import os
 import sys
+
+sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "../..")))
+
 import numpy as np
 import pandas as pd
 import pickle
@@ -10,6 +13,13 @@ from tensorflow.keras.models import load_model
 
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '../../')))
 from src.model.architecture import AttentionLayer
+from src.model.train import (
+    REGRESSION_FEATURE_COLUMNS as DEFAULT_FEATURES,
+    _augment_regression_features,
+    _augment_cross_sectional_features,
+    load_ensemble_models,
+    predict_ensemble,
+)
 
 def create_sequences(data, target, window_size=30):
     X, y = [], []
@@ -22,14 +32,25 @@ def evaluate_model(ticker='VCB'):
     print(f"Đang đánh giá và tái tạo đồ thị cho {ticker}...\n")
     
     df = pd.read_csv(f'data/processed/{ticker}_features.csv')
-    
-    df['price_diff'] = df['close_winsorized'].diff()
-    df.dropna(inplace=True)
-    df.reset_index(drop=True, inplace=True)
-    
-    features = ['open', 'high', 'low', 'close_winsorized', 'volume', 'sma_10', 'sma_20', 'rsi_14']
-    target_col = 'price_diff'
+
+    # Đọc feature list từ reg_config.pkl (mặc định DEFAULT_FEATURES nếu config chưa có)
+    cfg_path = f'models/{ticker.lower()}_reg_config.pkl'
+    if os.path.exists(cfg_path):
+        with open(cfg_path, 'rb') as f:
+            features = list(pickle.load(f).get('feature_columns', DEFAULT_FEATURES))
+    else:
+        features = list(DEFAULT_FEATURES)
+    target_col = 'log_return'
     price_col = 'close_winsorized' # Lấy cột giá tuyệt đối để làm cơ sở tái tạo
+
+    # Bổ sung feature engineered nếu CSV chưa có
+    df = _augment_regression_features(df)
+    # Cross-sectional đã rollback — chỉ gọi nếu config model có yêu cầu cột đó
+    if any(col in features for col in ('benchmark_return_1d', 'rank_return_1d', 'alpha_1d_vs_peer')):
+        df = _augment_cross_sectional_features(df, ticker)
+    df['log_return'] = np.log(df['close_winsorized'] / df['close_winsorized'].shift(1))
+    df.dropna(subset=features + [target_col, price_col], inplace=True)
+    df.reset_index(drop=True, inplace=True)
     
     data_values = df[features].values
     target_values = df[[target_col]].values
@@ -57,30 +78,34 @@ def evaluate_model(ticker='VCB'):
     
     X_test, _ = create_sequences(scaled_test_data, scaled_test_target, window_size=30)
     
-    # Tải mô hình đã huấn luyện
-    model = load_model(f'models/cnn_lstm_attn_{ticker.lower()}_v1.h5', 
-                       custom_objects={'AttentionLayer': AttentionLayer})
-    
-    # Step 1: AI đưa ra mức dự báo chênh lệch (Delta P)
-    predicted_scaled_diff = model.predict(X_test)
-    predicted_diff = target_scaler.inverse_transform(predicted_scaled_diff).flatten()
-    
-    # Step 2: Toán tái tạo (Reconstruction): 
-    # Giá dự báo hôm nay = Giá thực tế hôm qua + Mức chênh lệch AI đoán
-    previous_prices = test_prices[29 : 29 + len(predicted_diff)]
-    actual_prices = test_prices[30 : 30 + len(predicted_diff)] # Ground truth
-    
-    predicted_prices = previous_prices + predicted_diff
-    
+    # Step 1: Ưu tiên ensemble nếu có, fallback single model
+    ensemble_models, _cfg = load_ensemble_models(ticker)
+    if ensemble_models:
+        print(f"[ENSEMBLE] Đánh giá với {len(ensemble_models)} models")
+        predicted_scaled = predict_ensemble(ensemble_models, X_test)
+    else:
+        model = load_model(f'models/cnn_lstm_attn_{ticker.lower()}_v1.h5',
+                           custom_objects={'AttentionLayer': AttentionLayer},
+                           compile=False)
+        predicted_scaled = model.predict(X_test)
+    predicted_log_return = target_scaler.inverse_transform(predicted_scaled).flatten()
+
+    # Step 2: Toán tái tạo (Reconstruction) theo công thức log-return:
+    # Giá dự báo hôm nay = Giá thực tế hôm qua * exp(log_return dự đoán)
+    previous_prices = test_prices[29 : 29 + len(predicted_log_return)]
+    actual_prices = test_prices[30 : 30 + len(predicted_log_return)] # Ground truth
+
+    predicted_prices = previous_prices * np.exp(predicted_log_return)
+    predicted_diff = predicted_prices - previous_prices  # delta giá dùng để tính DA
+
     # Step 3: Đánh giá hiệu suất với các chỉ số RMSE, MAE, R² và MAPE
     rmse = np.sqrt(mean_squared_error(actual_prices, predicted_prices))
     mae = mean_absolute_error(actual_prices, predicted_prices)
     r2 = r2_score(actual_prices, predicted_prices)
     mape = np.mean(np.abs((actual_prices - predicted_prices) / actual_prices)) * 100
-    # Tính Directional Accuracy (DA)
-    actual_direction = np.sign(actual_prices[1:] - actual_prices[:-1])
-    predicted_direction = np.sign(predicted_prices[1:] - predicted_prices[:-1])
-    da = np.mean(actual_direction == predicted_direction) * 100
+    # Tính Directional Accuracy (DA): so sánh dấu của delta giá
+    actual_diff = actual_prices - previous_prices          # ground-truth price change
+    da = np.mean(np.sign(actual_diff) == np.sign(predicted_diff)) * 100
     
     plot_dates = test_dates[30 : 30 + len(predicted_diff)] # Ngày tháng tương ứng với phần test đã tái tạo
     
@@ -113,6 +138,6 @@ def evaluate_model(ticker='VCB'):
     plt.show()
 
 if __name__ == "__main__":
-    tickers = ['VCB', 'BID', 'CTG']
+    tickers = ['VCB', 'BID', 'CTG', 'MBB', 'TCB', 'VPB', 'ACB', 'HDB', 'SHB', 'VIB']
     for ticker in tickers:
         evaluate_model(ticker)

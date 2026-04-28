@@ -1,28 +1,28 @@
 # Walk-Forward Validation — CNN-LSTM-Attention
 
-*Cấu hình*: Train 756d / Val 126d / Test 63d, slide +63d, horizon H=5, ensemble 5 seeds [42, 123, 456, 789, 2024], epochs=50, patience=15. Số windows mục tiêu: 5.
+*Cấu hình*: Train 756d / Val 126d / Test 63d, slide +63d, horizon H=5, ensemble 5 seeds [42, 123, 456, 789, 1024], epochs=50, patience=15. Số windows mục tiêu: 5.
 
 ## Tổng hợp mean ± std qua các window
 
 | Ticker | n | DA_full (mean±std) | DA@cov30 | DA@cov20 | Sharpe intrinsic |
 |--------|---|--------------------|----------|----------|------------------|
-| BID | 5 | 53.3 ± 21.3% | 56.0 ± 39.1% | 54.3 ± 39.6% | 2.51 ± 6.96 |
+| CTG | 5 | 43.0 ± 9.9% | 62.0 ± 21.7% | 71.4 ± 20.2% | -3.10 ± 4.41 |
 
 ## Chi tiết từng window
 
-### BID
+### CTG
 
 | Window | Start | Test end | DA_full | DA@cov30 | DA@cov20 | Sharpe | T |
 |--------|-------|----------|---------|----------|----------|--------|---|
-| 1 | 0 | 945 | 30.3% | 70.0% | 71.4% | -2.11 | 2.17 |
-| 2 | 63 | 1008 | 51.5% | 20.0% | 28.6% | 1.75 | 0.94 |
-| 3 | 126 | 1071 | 36.4% | 10.0% | 0.0% | -5.13 | 0.70 |
-| 4 | 189 | 1134 | 81.8% | 100.0% | 100.0% | 12.82 | 0.85 |
-| 5 | 252 | 1197 | 66.7% | 80.0% | 71.4% | 5.22 | 2.09 |
+| 1 | 0 | 945 | 45.5% | 40.0% | 57.1% | -1.04 | 5.00 |
+| 2 | 63 | 1008 | 45.5% | 70.0% | 57.1% | -2.56 | 4.60 |
+| 3 | 126 | 1071 | 27.3% | 70.0% | 85.7% | -9.90 | 4.01 |
+| 4 | 189 | 1134 | 42.4% | 40.0% | 57.1% | -4.03 | 2.79 |
+| 5 | 252 | 1197 | 54.5% | 90.0% | 100.0% | 2.01 | 2.74 |
 
 ## Kết luận
 
-- Mean DA@cov20 across 1 ticker × 5 rolling windows: **54.3%** (vs random walk 50%).
-- Mean Sharpe intrinsic: **2.51** (annualized).
+- Mean DA@cov20 across 1 ticker × 5 rolling windows: **71.4%** (vs random walk 50%).
+- Mean Sharpe intrinsic: **-3.10** (annualized).
 - **Robustness**: std của DA@cov20 cho biết biến động qua thời kỳ. std nhỏ → model stable across regimes; std lớn → model phụ thuộc bối cảnh.
 - So với split 80/10/10 cố định trong thesis chính (DA@cov20 57.7%), walk-forward cho cái nhìn **mean±std** đáng tin cậy hơn, loại nghi vấn cherry-pick.

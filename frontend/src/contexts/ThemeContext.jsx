@@ -11,19 +11,19 @@ export function ThemeProvider({ children }) {
 
   const chartTheme = useMemo(
     () => ({
-      chartBg: isLightTheme ? '#ffffff' : '#161a1e',
-      textColor: isLightTheme ? '#556779' : '#848e9c',
-      gridColor: isLightTheme ? '#e5edf5' : '#2b3139',
-      borderColor: isLightTheme ? '#d6e0ea' : '#2b3139',
+      chartBg: isLightTheme ? '#fbfdff' : '#161a1e',
+      textColor: isLightTheme ? '#3d5166' : '#848e9c',
+      gridColor: isLightTheme ? '#d7e2ee' : '#2b3139',
+      borderColor: isLightTheme ? '#c5d1df' : '#2b3139',
       tooltipBg: isLightTheme ? 'rgba(255, 255, 255, 0.98)' : 'rgba(30, 35, 41, 0.85)',
-      tooltipBorder: isLightTheme ? '#d6e0ea' : '#2b3139',
+      tooltipBorder: isLightTheme ? '#aebdcd' : '#2b3139',
     }),
     [isLightTheme]
   );
 
   useEffect(() => {
-    const pageBg = isLightTheme ? '#eff4f9' : '#0b0e11';
-    const pageText = isLightTheme ? '#1b2a38' : '#eaecef';
+    const pageBg = isLightTheme ? '#e8eef5' : '#0b0e11';
+    const pageText = isLightTheme ? '#172333' : '#eaecef';
 
     document.body.style.backgroundColor = pageBg;
     document.body.style.color = pageText;

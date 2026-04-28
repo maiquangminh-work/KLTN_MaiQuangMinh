@@ -1,11 +1,93 @@
 ﻿import { useState, useEffect } from 'react';
 import { useMarketData } from '../contexts/MarketDataContext';
+import { useLocation, useParams } from 'react-router-dom';
+import { useTheme } from '../contexts/ThemeContext';
 import { useFilteredNews, useNewsInsights } from '../hooks/useNewsAnalytics';
 import { fetchNews } from '../api/market';
+import { VALID_TICKERS } from '../utils/constants';
 import LoadingStatePanel from '../components/LoadingStatePanel';
 
 const NEWS_PAGE_SIZE = 40;
 const NEWS_FETCH_LIMIT = 300;
+
+const COPY = {
+  vi: {
+    kicker: 'News Intelligence',
+    title: 'Trung tâm tin tức vĩ mô và ngân hàng',
+    subtitle:
+      'Hệ thống tổng hợp tin từ nhiều nguồn và cho phép bóc riêng luồng tin của từng ngân hàng hoặc theo dõi toàn thị trường trong nhiều tuần gần nhất.',
+    focus: 'Trọng tâm',
+    allSector: 'Toàn ngành',
+    sourceCount: 'Nguồn có bài',
+    latestUpdate: 'Cập nhật gần nhất',
+    searchPlaceholder: 'Tìm kiếm linh hoạt (VD: VCB, Vietcombank, lãi suất, tỷ giá)...',
+    searchNotePrefix: 'Hỗ trợ alias tự động: gõ',
+    searchNoteSuffix: 'vẫn hiểu là Vietcombank, tương tự với BID/BIDV và CTG/VietinBank.',
+    visibleArticles: 'Bài đang hiển thị',
+    visibleArticlesSub: 'Sau khi áp dụng bộ lọc tìm kiếm',
+    relatedArticles: 'Bài liên quan',
+    selectedFocus: 'trọng tâm đang chọn',
+    relatedArticlesSub:
+      'Khi chọn ngân hàng, hệ thống ưu tiên bài liên quan nhưng vẫn giữ cả tin nền của toàn ngành',
+    priorityArticles: 'Bài ưu tiên',
+    priorityArticlesSub: 'Nhóm bài có mức độ liên quan cao để đọc trước',
+    loadingInline: 'Đang tổng hợp tin tức từ các nguồn đang có bài phù hợp...',
+    noResults: (query) => `Không tìm thấy bài báo nào khớp với từ khóa "${query}".`,
+    focusBanking: 'ngân hàng',
+    bankingNews: 'Tin ngân hàng',
+    macroNews: 'Tin vĩ mô ngành',
+    relevancePrefix: 'Liên quan',
+    featuredFallback: 'Bài viết đang được theo dõi để bổ sung tín hiệu cho hệ thống khuyến nghị đầu tư.',
+    cardFallback: 'Bài viết đang được theo dõi để bổ sung bối cảnh cho mô hình dự báo.',
+    readFull: 'Xem bài phân tích đầy đủ',
+    featuredImagePlaceholder: 'Ảnh xem trước đang được cập nhật',
+    cardImagePlaceholder: 'Chưa có ảnh xem trước',
+    sourcesWithArticles: 'Nguồn đang có bài',
+    relatedTo: 'Liên quan',
+    generalWatch: 'Theo dõi chung',
+    showing: 'Hiển thị',
+    of: 'trên',
+    articles: 'bài viết',
+  },
+  en: {
+    kicker: 'News Intelligence',
+    title: 'Macro and banking news center',
+    subtitle:
+      'The system aggregates articles from multiple sources and lets you isolate each bank news flow or follow broader market context across recent weeks.',
+    focus: 'Focus',
+    allSector: 'Sector-wide',
+    sourceCount: 'Active sources',
+    latestUpdate: 'Latest update',
+    searchPlaceholder: 'Flexible search (e.g. VCB, Vietcombank, interest rates, FX)...',
+    searchNotePrefix: 'Automatic aliases are supported: typing',
+    searchNoteSuffix: 'still matches Vietcombank, and similarly BID/BIDV or CTG/VietinBank.',
+    visibleArticles: 'Visible articles',
+    visibleArticlesSub: 'After applying the search filter',
+    relatedArticles: 'Related articles',
+    selectedFocus: 'selected focus',
+    relatedArticlesSub:
+      'When a bank is selected, related articles are prioritized while broader sector context is still retained',
+    priorityArticles: 'Priority articles',
+    priorityArticlesSub: 'Articles with stronger relevance signals to read first',
+    loadingInline: 'Collecting relevant articles from available sources...',
+    noResults: (query) => `No articles matched "${query}".`,
+    focusBanking: 'banking',
+    bankingNews: 'Banking news',
+    macroNews: 'Macro/sector news',
+    relevancePrefix: 'Relevance',
+    featuredFallback: 'This article is tracked as an additional signal for the investment recommendation layer.',
+    cardFallback: 'This article is tracked as extra context for the forecasting model.',
+    readFull: 'Read full article',
+    featuredImagePlaceholder: 'Preview image is being updated',
+    cardImagePlaceholder: 'No preview image yet',
+    sourcesWithArticles: 'Sources with articles',
+    relatedTo: 'Related to',
+    generalWatch: 'General watch',
+    showing: 'Showing',
+    of: 'of',
+    articles: 'articles',
+  },
+};
 
 function buildPaginationItems(currentPage, totalPages) {
   if (totalPages <= 7) {
@@ -43,9 +125,25 @@ function buildPaginationItems(currentPage, totalPages) {
 
 export default function NewsPage() {
   const { newsData, setNewsData, loadingNews, setLoadingNews } = useMarketData();
+  const { language } = useTheme();
+  const location = useLocation();
+  const { ticker: routeTicker } = useParams();
+  const copy = COPY[language] || COPY.vi;
   const [searchQuery, setSearchQuery] = useState('');
   const [newsFocusTicker, setNewsFocusTicker] = useState('ALL');
   const [currentPage, setCurrentPage] = useState(1);
+
+  useEffect(() => {
+    const params = new URLSearchParams(location.search);
+    setSearchQuery(params.get('q') || '');
+    setCurrentPage(1);
+  }, [location.search]);
+
+  useEffect(() => {
+    const normalizedTicker = String(routeTicker || '').toUpperCase();
+    setNewsFocusTicker(VALID_TICKERS.includes(normalizedTicker) ? normalizedTicker : 'ALL');
+    setCurrentPage(1);
+  }, [routeTicker]);
 
   useEffect(() => {
     if (newsData.length > 0) return;
@@ -67,7 +165,7 @@ export default function NewsPage() {
   }, [newsData.length, setNewsData, setLoadingNews]);
 
   const filteredNews = useFilteredNews(newsData, searchQuery);
-  const newsInsights = useNewsInsights(filteredNews, newsFocusTicker, searchQuery);
+  const newsInsights = useNewsInsights(filteredNews, newsFocusTicker, searchQuery, language);
   const totalArticles = newsInsights.enrichedArticles.length;
   const totalPages = Math.max(1, Math.ceil(totalArticles / NEWS_PAGE_SIZE));
   const safeCurrentPage = Math.min(currentPage, totalPages);
@@ -77,42 +175,39 @@ export default function NewsPage() {
   const featuredArticle = pagedArticles[0] || null;
   const secondaryArticles = pagedArticles.slice(1);
   const paginationItems = buildPaginationItems(safeCurrentPage, totalPages);
+  const focusDisplay = newsFocusTicker === 'ALL' ? copy.allSector : newsFocusTicker;
 
-  useEffect(() => {
+  const handleSearchChange = (event) => {
+    setSearchQuery(event.target.value);
     setCurrentPage(1);
-  }, [searchQuery, newsFocusTicker]);
+  };
 
-  useEffect(() => {
-    if (currentPage > totalPages) {
-      setCurrentPage(totalPages);
-    }
-  }, [currentPage, totalPages]);
+  const handleFocusTickerChange = (bankCode) => {
+    setNewsFocusTicker(bankCode);
+    setCurrentPage(1);
+  };
 
   return (
     <div className="news-shell">
       <div className="news-hero">
         <div className="news-hero-main">
-          <span className="news-kicker">News Intelligence</span>
-          <h2 className="news-hero-title">Trung tâm tin tức vĩ mô và ngân hàng</h2>
-          <p className="news-hero-subtitle">
-            Hệ thống tổng hợp tin từ nhiều nguồn và cho phép bóc riêng luồng tin của từng ngân hàng hoặc theo dõi toàn thị trường
-            trong nhiều tuần gần nhất.
-          </p>
+          <span className="news-kicker">{copy.kicker}</span>
+          <h2 className="news-hero-title">{copy.title}</h2>
+          <p className="news-hero-subtitle">{copy.subtitle}</p>
           <div className="news-pill-row">
-            <span className="news-pill active">Trọng tâm: {newsFocusTicker === 'ALL' ? 'Toàn ngành' : newsFocusTicker}</span>
-            <span className="news-pill">Nguồn theo dõi: {newsInsights.uniqueSourcesCount}</span>
-            <span className="news-pill">Nguồn đang có bài: {newsInsights.activeSourcesCount}</span>
-            <span className="news-pill">Cập nhật gần nhất: {newsInsights.latestPublished}</span>
+            <span className="news-pill active">{copy.focus}: {focusDisplay}</span>
+            <span className="news-pill">{copy.sourceCount}: {newsInsights.activeSourcesCount}</span>
+            <span className="news-pill">{copy.latestUpdate}: {newsInsights.latestPublished}</span>
           </div>
           <div className="news-focus-row">
-            {['ALL', 'VCB', 'BID', 'CTG'].map((bankCode) => (
+            {['ALL', ...VALID_TICKERS].map((bankCode) => (
               <button
                 key={bankCode}
                 type="button"
                 className={`news-focus-chip ${newsFocusTicker === bankCode ? 'active' : ''}`}
-                onClick={() => setNewsFocusTicker(bankCode)}
+                onClick={() => handleFocusTickerChange(bankCode)}
               >
-                {bankCode === 'ALL' ? 'Toàn ngành' : bankCode}
+                {bankCode === 'ALL' ? copy.allSector : bankCode}
               </button>
             ))}
           </div>
@@ -123,35 +218,32 @@ export default function NewsPage() {
             <input
               type="text"
               className="search-input"
-              placeholder="Tìm kiếm linh hoạt (VD: VCB, Vietcombank, lãi suất, tỷ giá)..."
+              placeholder={copy.searchPlaceholder}
               value={searchQuery}
-              onChange={(e) => setSearchQuery(e.target.value)}
+              onChange={handleSearchChange}
             />
           </div>
           <div className="news-search-note">
-            Hỗ trợ alias tự động: gõ <strong>VCB</strong> vẫn hiểu là <strong>Vietcombank</strong>, tương tự với
-            <strong> BID/BIDV</strong> và <strong> CTG/VietinBank</strong>.
+            {copy.searchNotePrefix} <strong>VCB</strong> {copy.searchNoteSuffix}
           </div>
 
           <div className="news-stats-grid">
             <div className="news-stat-card">
-              <span className="news-stat-label">Bài đang hiển thị</span>
+              <span className="news-stat-label">{copy.visibleArticles}</span>
               <span className="news-stat-value">{newsInsights.enrichedArticles.length}</span>
-              <span className="news-stat-sub">Sau khi áp dụng bộ lọc tìm kiếm</span>
+              <span className="news-stat-sub">{copy.visibleArticlesSub}</span>
             </div>
             <div className="news-stat-card">
               <span className="news-stat-label">
-                Bài liên quan {newsFocusTicker === 'ALL' ? 'trọng tâm đang chọn' : newsFocusTicker}
+                {copy.relatedArticles} {newsFocusTicker === 'ALL' ? copy.selectedFocus : newsFocusTicker}
               </span>
               <span className="news-stat-value">{newsInsights.tickerFocusedCount}</span>
-              <span className="news-stat-sub">
-                Khi chọn ngân hàng, hệ thống ưu tiên bài liên quan nhưng vẫn giữ cả tin nền của toàn ngành
-              </span>
+              <span className="news-stat-sub">{copy.relatedArticlesSub}</span>
             </div>
             <div className="news-stat-card">
-              <span className="news-stat-label">Bài ưu tiên</span>
+              <span className="news-stat-label">{copy.priorityArticles}</span>
               <span className="news-stat-value">{newsInsights.priorityArticlesCount}</span>
-              <span className="news-stat-sub">Nhóm bài có mức độ liên quan cao để đọc trước</span>
+              <span className="news-stat-sub">{copy.priorityArticlesSub}</span>
             </div>
           </div>
         </div>
@@ -161,11 +253,11 @@ export default function NewsPage() {
         <LoadingStatePanel variant="news" />
       ) : loadingNews ? (
         <div className="news-featured-card" style={{ textAlign: 'center', color: '#fcd535' }}>
-          Đang tổng hợp tin tức từ CafeF, Vietstock, VNExpress, Báo Đầu Tư...
+          {copy.loadingInline}
         </div>
       ) : filteredNews.length === 0 ? (
         <div className="news-featured-card" style={{ textAlign: 'center', color: '#848e9c' }}>
-          Không tìm thấy bài báo nào khớp với từ khóa &quot;{searchQuery}&quot;.
+          {copy.noResults(searchQuery)}
         </div>
       ) : (
         <>
@@ -177,22 +269,22 @@ export default function NewsPage() {
                   <span className="news-time-badge">{featuredArticle.published}</span>
                   <span className={`news-tag ${featuredArticle.isTickerFocused ? '' : 'macro'}`}>
                     {featuredArticle.isTickerFocused
-                      ? `Trọng tâm ${newsFocusTicker === 'ALL' ? 'ngân hàng' : newsFocusTicker}`
+                      ? `${copy.focus} ${newsFocusTicker === 'ALL' ? copy.focusBanking : newsFocusTicker}`
                       : featuredArticle.isBankingRelated
-                        ? 'Tin ngân hàng'
-                        : 'Tin vĩ mô ngành'}
+                        ? copy.bankingNews
+                        : copy.macroNews}
                   </span>
                   <span className={`news-relevance-badge ${featuredArticle.relevanceTone}`}>
-                    Liên quan {featuredArticle.relevanceLabel}
+                    {copy.relevancePrefix} {featuredArticle.relevanceLabel}
                   </span>
                 </div>
                 <h3 className="news-featured-title">{featuredArticle.title}</h3>
                 <p className="news-featured-desc">
-                  {featuredArticle.cleanDescription || 'Bài viết đang được theo dõi để bổ sung tín hiệu cho hệ thống khuyến nghị đầu tư.'}
+                  {featuredArticle.cleanDescription || copy.featuredFallback}
                 </p>
                 <div className="news-card-insight">{featuredArticle.relevanceSummary}</div>
                 <a href={featuredArticle.link} target="_blank" rel="noopener noreferrer" className="news-cta">
-                  Xem bài phân tích đầy đủ ↗
+                  {copy.readFull} ↗
                 </a>
               </div>
 
@@ -200,9 +292,9 @@ export default function NewsPage() {
                 {featuredArticle.image_url ? (
                   <img src={featuredArticle.image_url} alt={featuredArticle.title} className="news-featured-image" />
                 ) : (
-                  <div className="news-featured-image placeholder">Ảnh xem trước đang được cập nhật</div>
+                  <div className="news-featured-image placeholder">{copy.featuredImagePlaceholder}</div>
                 )}
-                <span className="news-stat-label">Nguồn đang chiếm tỷ trọng lớn</span>
+                <span className="news-stat-label">{copy.sourcesWithArticles}</span>
                 <div className="news-chip-grid">
                   {newsInsights.sourceChips.map((item) => (
                     <div key={item.sourceName} className="news-source-chip">
@@ -222,7 +314,7 @@ export default function NewsPage() {
                   {article.image_url ? (
                     <img src={article.image_url} alt={article.title} className="news-card-image" />
                   ) : (
-                    <div className="news-card-image placeholder">Chưa có ảnh xem trước</div>
+                    <div className="news-card-image placeholder">{copy.cardImagePlaceholder}</div>
                   )}
                   <div className="news-meta">
                     <span className="news-source">[{article.source}]</span>
@@ -230,16 +322,16 @@ export default function NewsPage() {
                   </div>
                   <h3>{article.title}</h3>
                   <div className="desc">
-                    {article.cleanDescription || 'Bài viết đang được theo dõi để bổ sung bối cảnh cho mô hình dự báo.'}
+                    {article.cleanDescription || copy.cardFallback}
                   </div>
                   <div className="news-card-insight">{article.relevanceSummary}</div>
                   <div className="news-card-footer">
                     <span className={`news-tag ${article.isTickerFocused ? '' : article.isBankingRelated ? 'macro' : 'neutral'}`}>
                       {article.isTickerFocused
-                        ? `Liên quan ${newsFocusTicker === 'ALL' ? 'ngân hàng' : newsFocusTicker}`
+                        ? `${copy.relatedTo} ${newsFocusTicker === 'ALL' ? copy.focusBanking : newsFocusTicker}`
                         : article.isBankingRelated
-                          ? 'Tin ngân hàng'
-                          : 'Theo dõi chung'}
+                          ? copy.bankingNews
+                          : copy.generalWatch}
                     </span>
                     <span className={`news-relevance-badge ${article.relevanceTone}`}>
                       {article.relevanceLabel}
@@ -253,7 +345,7 @@ export default function NewsPage() {
           {totalPages > 1 && (
             <div className="news-pagination-shell">
               <div className="news-pagination-summary">
-                Hiển thị {startIndex + 1}-{Math.min(endIndex, totalArticles)} trên {totalArticles} bài viết
+                {copy.showing} {startIndex + 1}-{Math.min(endIndex, totalArticles)} {copy.of} {totalArticles} {copy.articles}
               </div>
               <div className="news-pagination">
                 <button

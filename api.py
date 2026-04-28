@@ -8,6 +8,8 @@ import json
 import os
 import re
 import sys
+from dotenv import load_dotenv
+load_dotenv()
 import threading
 from functools import lru_cache
 from config import SUPPORTED_TICKERS, TRAINED_TICKERS, BANK_NAMES, BANK_WEBSITES, BANK_LOGOS, NEWS_ALIASES, DEFAULT_FORECAST_STEPS
@@ -571,11 +573,9 @@ def _has_trained_model(ticker_name):
     return all(os.path.exists(path) for path in prob_bundle) or all(os.path.exists(path) for path in reg_bundle)
 
 
-# ---------------------------------------------------------------------------
 # Độ tin cậy MÔ HÌNH (tĩnh) - tách riêng khỏi confidence (động) để hiển thị
 # theo phong cách Bloomberg/FiinTrade: "model reliability" vs "signal strength".
 # Nguồn dữ liệu: models/probability_model_metrics.csv (kết quả backtest).
-# ---------------------------------------------------------------------------
 
 @lru_cache(maxsize=1)
 def _doc_bang_do_tin_cay_mo_hinh():
@@ -2382,7 +2382,7 @@ def get_prediction(ticker: str):
                               float(new_row[sma10_idx] / new_row[sma20_idx] - 1.0))
             return new_row
 
-        # ─── Nhánh A: horizon == 1 — recursive multi-step như cũ ───
+        # Nhánh A: horizon == 1 — recursive multi-step như cũ
         if not is_probability_mode and horizon_days == 1:
             for step in range(forecast_steps):
                 scaled_seq = feature_scaler.transform(current_unscaled_seq)
@@ -2411,7 +2411,7 @@ def get_prediction(ticker: str):
                 current_unscaled_seq = np.vstack((current_unscaled_seq[1:], new_row))
                 current_price = next_price
 
-        # ─── Nhánh B: horizon > 1 — single prediction + interpolation ───
+        # Nhánh B: horizon > 1 — single prediction + interpolation
         # Model output = log(P_{t+H}/P_t) tổng cộng H ngày. Ta phân đều thành
         # daily rate và sinh T+1..T+H (+ giữ nguyên plateau cho T+H+1..) để
         # frontend vẫn có multi-step forecast hiển thị.
@@ -2466,8 +2466,8 @@ def get_prediction(ticker: str):
             data_quality=data_quality,
         )
 
-        # ─── Bước 5: Confidence Gate ───────────────────────────────────────
-        # Tính confidence score = |raw_predicted_log_return| / ref_std_train.
+        # Confidence Gate 
+        # Bước 5: Tính confidence score = |raw_predicted_log_return| / ref_std_train.
         # Frontend có thể hiển thị badge "Tín hiệu mạnh" khi score >= threshold.
         confidence_gate_info = None
         if not is_probability_mode and raw_predicted_log_return is not None:
@@ -2489,7 +2489,7 @@ def get_prediction(ticker: str):
                 "label": ("Tín hiệu mạnh" if gate_passed else "Tín hiệu yếu — chờ thêm xác nhận"),
                 "horizon_days": int(horizon_days),
             }
-            # Nếu gate KHÔNG PASS và recommendation đang là KHẢ QUAN/KÉM KHẢ QUAN →
+            # Nếu gate KHÔNG PASS và recommendation đang là KHẢ QUAN/KÉM KHẢ QUAN
             # hạ xuống TRUNG LẬP (đồng thuận với backtest: chỉ trade tín hiệu mạnh).
             if not gate_passed and recommendation_bundle.get("recommendation") in ("KHẢ QUAN", "KÉM KHẢ QUAN"):
                 recommendation_bundle["recommendation"] = "TRUNG LẬP"
@@ -2787,7 +2787,7 @@ def get_company_profile(ticker: str):
         db.close()
 
 
-# â”€â”€â”€ PHASE 2: Model Performance & Signal History â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+# PHASE 2: Model Performance & Signal History 
 
 def _doc_toan_bo_lich_su_tin_cay(ticker_name):
     """Đọc TOÀN BỘ confidence history (không giới hạn limit) cho performance analysis."""
@@ -3001,7 +3001,7 @@ def get_signal_history(ticker: str, days: int = 90):
         raise HTTPException(status_code=500, detail=str(exc))
 
 
-# ── Endpoint: Sở hữu nước ngoài (Foreign Ownership) ─────────────────────────
+# Endpoint: Sở hữu nước ngoài (Foreign Ownership) 
 @app.get("/api/foreign-ownership/{ticker}")
 def get_foreign_ownership(ticker: str):
     """Trả về cơ cấu sở hữu, cổ đông lớn và giao dịch khối ngoại."""

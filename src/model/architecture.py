@@ -128,6 +128,85 @@ def build_cnn_lstm_attention_model(input_shape):
     return _compile_model(model)
 
 
+def build_cnn_lstm_attention_classifier_model(input_shape, num_classes=3):
+    inputs = Input(shape=input_shape, name="Input_Layer")
+    x = Conv1D(filters=64, kernel_size=3, activation='relu', name="1D_CNN_Layer")(inputs)
+    x = MaxPooling1D(pool_size=2, name="MaxPooling_Layer")(x)
+    x = LSTM(units=50, return_sequences=True, name="LSTM_Layer")(x)
+    x = AttentionLayer(name="Attention_Layer")(x)
+    x = Dense(units=32, activation='relu', name="Dense_Layer")(x)
+    x = Dropout(0.2, name="Dropout_1")(x)
+    outputs = Dense(units=num_classes, activation='softmax', name="Probability_Output_Layer")(x)
+    model = Model(inputs=inputs, outputs=outputs, name="CNN_LSTM_Attention_Alpha_Classifier")
+    model.compile(
+        optimizer=tf.keras.optimizers.Adam(learning_rate=0.001),
+        loss='sparse_categorical_crossentropy',
+        metrics=['accuracy']
+    )
+    return model
+
+
+def build_cnn_lstm_attention_multitask_model(input_shape, num_direction_classes=3):
+    """Multi-task head — giữ nguyên backbone CNN-LSTM-Attention gốc.
+
+    Share backbone: Conv1D → MaxPool → LSTM → Attention → Dense(32) + Dropout.
+    Output branching:
+      - regression_output: 1 unit linear — dự báo log-return magnitude (scaled)
+      - direction_output: 3 units softmax — phân loại hướng {0:down, 1:flat, 2:up}
+
+    Rationale (tăng DA):
+      - Bắt model học 'hướng' rõ ràng qua classifier head → tín hiệu mạnh hơn cho DA
+      - Magnitude regression vẫn được giữ để tái tạo giá
+      - Shared representation giúp hai task regularize lẫn nhau
+    """
+    inputs = Input(shape=input_shape, name="Input_Layer")
+
+    # Shared backbone — giữ nguyên kiến trúc chuẩn
+    x = Conv1D(filters=64, kernel_size=3, activation='relu', name="1D_CNN_Layer")(inputs)
+    x = MaxPooling1D(pool_size=2, name="MaxPooling_Layer")(x)
+    x = LSTM(units=50, return_sequences=True, name="LSTM_Layer")(x)
+    x = AttentionLayer(name="Attention_Layer")(x)
+
+    # Task-specific branches
+    shared = Dense(units=32, activation='relu', name="Shared_Dense")(x)
+    shared = Dropout(0.2, name="Shared_Dropout")(shared)
+
+    # Regression branch
+    reg_hidden = Dense(units=16, activation='relu', name="Reg_Hidden")(shared)
+    regression_output = Dense(units=1, activation='linear', name="regression_output")(reg_hidden)
+
+    # Direction classification branch
+    dir_hidden = Dense(units=16, activation='relu', name="Dir_Hidden")(shared)
+    direction_output = Dense(units=num_direction_classes, activation='softmax',
+                             name="direction_output")(dir_hidden)
+
+    model = Model(inputs=inputs,
+                  outputs={
+                      'regression_output': regression_output,
+                      'direction_output': direction_output,
+                  },
+                  name="CNN_LSTM_Attention_Multitask")
+
+    # Composite loss: MSE cho regression + cross-entropy cho direction
+    # Weight nghiêng về direction (alpha_dir=0.6) để đẩy DA lên
+    model.compile(
+        optimizer=tf.keras.optimizers.Adam(learning_rate=0.001),
+        loss={
+            'regression_output': 'mean_squared_error',
+            'direction_output': 'sparse_categorical_crossentropy',
+        },
+        loss_weights={
+            'regression_output': 0.4,
+            'direction_output': 0.6,
+        },
+        metrics={
+            'regression_output': ['mae'],
+            'direction_output': ['accuracy'],
+        },
+    )
+    return model
+
+
 MODEL_BUILDERS = {
     "lstm_only": build_lstm_only_model,
     "cnn_only": build_cnn_only_model,

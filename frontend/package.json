@@ -5,7 +5,8 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
-    "build": "vite build",
+    "check:text": "node ./scripts/check-text-integrity.mjs",
+    "build": "npm run check:text && vite build",
     "lint": "eslint .",
     "preview": "vite preview"
   },
