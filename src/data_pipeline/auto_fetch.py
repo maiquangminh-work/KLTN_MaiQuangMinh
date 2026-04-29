@@ -150,14 +150,14 @@ def update_database():
             else:
                 print(f"{ticker}: Them {inserted_count}, cap nhat {updated_count}. Nguon khong tra DTNN lich su.")
             records = [None] * inserted_count
-            print(f"✅ {ticker}: Đã chèn thêm {len(records)} dòng vào Database.")
+            print(f"{ticker}: Đã chèn thêm {len(records)} dòng vào Database.")
             
         except Exception as e:
             print(f"Lỗi khi cập nhật {ticker}: {e}")
             db.rollback()
             
     db.close()
-    print("🎉 Hoàn tất tiến trình cập nhật!\n")
+    print("Hoàn tất tiến trình cập nhật!\n")
 
 # Lập lịch tự động chạy vào 01:00 AM mỗi sáng
 schedule.every().day.at("01:00").do(update_database)

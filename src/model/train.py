@@ -287,10 +287,8 @@ def train_model(ticker='VCB'):
         pickle.dump(config_payload, f)
 
 
-# ---------------------------------------------------------------------------
 # Ensemble: train N models (N seeds khác nhau) → average prediction để giảm
 # variance và cải thiện DA 2-4 điểm % (theo lý thuyết Law of Large Numbers).
-# ---------------------------------------------------------------------------
 
 def train_model_ensemble(ticker: str = 'VCB',
                          seeds: list | None = None,
@@ -496,11 +494,9 @@ def predict_ensemble(models: list, X: np.ndarray) -> np.ndarray:
     return preds.mean(axis=0)
 
 
-# ---------------------------------------------------------------------------
 # Multi-task head: model học đồng thời regression (log-return) + classification
 # (direction 3-class). Composite loss giúp backbone học signal phục vụ cả hai
 # task → DA kỳ vọng tăng 3-5 điểm %.
-# ---------------------------------------------------------------------------
 
 def _build_direction_labels(log_return: np.ndarray, neutral_band: float = 0.001) -> np.ndarray:
     """Sinh direction label 3-class từ log-return.
