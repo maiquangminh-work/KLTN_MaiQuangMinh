@@ -212,7 +212,7 @@ def main():
     tickers = ['VCB', 'BID', 'CTG', 'MBB', 'TCB', 'VPB', 'ACB', 'HDB', 'SHB', 'VIB']
     rows = []
     print("=" * 80)
-    print("  STEP 1/2: Computing DA statistics for each ticker")
+    print("  [1/2] Tính DA statistics cho từng ticker")
     print("=" * 80)
     for tk in tickers:
         print(f"\n[DA] {tk} ...")
@@ -226,7 +226,7 @@ def main():
             rows.append({'ticker': tk, 'error': str(e)})
 
     print("\n" + "=" * 80)
-    print("  STEP 2/2: Running backtest for each ticker (hybrid mode)")
+    print("  [2/2] Chạy backtest cho từng ticker (hybrid mode)")
     print("=" * 80)
     bt_results = {}
     for tk in tickers:

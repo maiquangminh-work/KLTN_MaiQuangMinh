@@ -58,7 +58,7 @@ def _resolve_features(ticker: str):
 
 
 def _resolve_horizon(ticker: str) -> int:
-    """Đọc horizon_days từ reg_config.pkl (Bước 4). Default 1 cho backward compat."""
+    """Đọc horizon_days từ reg_config.pkl. Default 1 cho backward compat."""
     cfg_path = f'models/{ticker.lower()}_reg_config.pkl'
     if os.path.exists(cfg_path):
         with open(cfg_path, 'rb') as f:
@@ -98,7 +98,7 @@ def diagnose(ticker='VCB'):
     ts_path = f'models/{ticker.lower()}_target_scaler.pkl'
     cfg_path = f'models/{ticker.lower()}_reg_config.pkl'
 
-    # Cần CSV + scalers bắt buộc. Model: chấp nhận single HOẶC ensemble (Bước 2/4)
+    # Cần CSV + scalers. Model: chấp nhận single HOẶC ensemble
     # — mã mới train sau có thể chỉ có ensemble, chưa có file single.
     has_single = os.path.exists(model_path)
     has_ensemble = False
@@ -131,7 +131,7 @@ def diagnose(ticker='VCB'):
     # Chỉ augment cross-sectional nếu feature list của model (đọc từ reg_config) yêu cầu
     if any(col in features for col in ('benchmark_return_1d', 'rank_return_1d', 'alpha_1d_vs_peer')):
         df = _augment_cross_sectional_features(df, ticker)
-    # Target theo horizon (Bước 4)
+    # Target theo horizon
     if horizon_days == 1:
         df['log_return'] = np.log(df[PRICE_COL] / df[PRICE_COL].shift(1))
     else:
@@ -273,7 +273,7 @@ def diagnose(ticker='VCB'):
         print(f"\n  [TRUNG BÌNH] Mô hình {ticker} có DA gần 50%, "
               "MAE tương đương naive — cần cải thiện feature engineering.")
 
-    # ─── Bước 5: Confidence Gate Analysis ───────────────────────────────
+    # ─── Confidence Gate Analysis ────────────────────────────────────────
     # Ý tưởng: lọc ra những tín hiệu có |predicted_log_return| lớn (model
     # tự tin), đo DA trên subset đó. Nếu DA tăng đáng kể → gate có giá trị
     # (filter noise, giữ signal) → model hữu ích cho giao dịch thực.
@@ -356,7 +356,6 @@ def diagnose(ticker='VCB'):
         'lag1_corr': lag1_corr, 'diff_corr': diff_corr,
         'sign_match': sign_match,
         'ai_diff_std': ai_diff_std, 'actual_diff_std': actual_diff_std,
-        # Bước 5: gate
         'temperature': float(T),
         'gate': gate_results,
     }

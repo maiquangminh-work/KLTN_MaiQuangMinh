@@ -63,7 +63,7 @@ def update_database():
     
     for ticker in TICKERS:
         try:
-            # 1. Tìm ngày gần nhất đã lưu trong Database
+            # Tìm ngày gần nhất đã lưu trong Database
             last_record = db.query(StockPrice).filter(StockPrice.ticker == ticker).order_by(StockPrice.time.desc()).first()
             
             if last_record:
@@ -82,7 +82,7 @@ def update_database():
                 print(f"{ticker}: Dữ liệu đã được cập nhật mới nhất.")
                 continue
                 
-            # 2. Gọi API vnstock (CÚ PHÁP MỚI CỦA BẢN V3)
+            # Gọi vnstock API lấy dữ liệu giá
             print(f"Đang kéo dữ liệu {ticker} từ {start_date} đến {today_str}...")
             
             # Khởi tạo đối tượng mã chứng khoán (KBS là nguồn ổn định nhất hiện tại)
@@ -101,7 +101,7 @@ def update_database():
             if 'foreign_net_volume' not in df.columns and {'foreign_buy_volume', 'foreign_sell_volume'}.issubset(df.columns):
                 df['foreign_net_volume'] = df['foreign_buy_volume'] - df['foreign_sell_volume']
                 
-            # 3. Ghi dữ liệu mới vào Database
+            # Ghi dữ liệu mới vào Database
             inserted_count = 0
             updated_count = 0
             foreign_count = 0

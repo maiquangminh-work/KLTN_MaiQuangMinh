@@ -82,24 +82,23 @@ def fetch_company_profiles():
                     db.add(db_record)
                 
                 
-                # 1. Thông tin cơ bản
+                # Thông tin cơ bản
                 db_record.company_name = STATIC_INFO[ticker]['name']
                 db_record.industry = str(profile_data.get('company_type', 'Ngân hàng thương mại'))
                 db_record.exchange = str(profile_data.get('exchange', 'HOSE'))
                 db_record.logo_url = STATIC_INFO[ticker]['logo']
-                
-                # 2. Các chỉ số tài chính
+
+                # Chỉ số tài chính
                 capital = profile_data.get('charter_capital', 0)
                 db_record.charter_capital = f"{int(capital):,} tỷ đồng" if pd.notna(capital) else "N/A"
-                
-                # 3. Thông tin niêm yết
+
+                # Thông tin niêm yết
                 db_record.first_trading_date = str(profile_data.get('listing_date', ''))
-                
-                # Giá niêm yết đúng định dạng
+
                 first_price = profile_data.get('listing_price', 0)
                 db_record.first_price = f"{float(first_price)/1000:,.1f}" if pd.notna(first_price) else "N/A"
-                
-                # 4. Khối lương cổ phiếu
+
+                # Khối lượng cổ phiếu
                 out_shares = profile_data.get('outstanding_shares', 0)
                 formatted_shares = f"{int(float(out_shares)):,}" if pd.notna(out_shares) else "N/A"
                 

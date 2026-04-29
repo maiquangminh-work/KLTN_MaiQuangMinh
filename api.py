@@ -2150,7 +2150,7 @@ def _giam_cap_khuyen_nghi_neu_du_lieu_kem(recommendation_bundle, data_quality):
 
 # Bộ nhớ Cache
 AI_COMPONENTS = {}
-# Cache ensemble models riêng (Bước 2): load 1 lần, dùng cho mỗi request predict
+# Cache ensemble models: load 1 lần, dùng cho mỗi request predict
 ENSEMBLE_CACHE = {}
 
 def get_regression_ensemble(ticker_name):
@@ -2341,11 +2341,11 @@ def get_prediction(ticker: str):
         forecast_steps = 0 if is_probability_mode else DEFAULT_FORECAST_STEPS
         predicted_closes = list(df['close_winsorized'].tail(30).values)
         reg_target_type = (model_config or {}).get("target_type", "price_diff") if not is_probability_mode else None
-        # Bước 4: horizon của model (1 = daily T+1; 5 = forward 5-day)
+        # Horizon: 1 = daily T+1, 5 = forward 5-day
         horizon_days = int((model_config or {}).get("horizon_days", 1)) if not is_probability_mode else 1
-        # Map tên cột → index trong features để update đúng vị trí (an toàn với feature list mở rộng)
+        # Map tên cột → index trong features để update đúng vị trí
         feature_idx = {name: idx for idx, name in enumerate(features)} if not is_probability_mode else {}
-        # Lấy ensemble nếu có (Bước 2): ưu tiên ensemble averaging
+        # Ưu tiên ensemble averaging nếu có
         ensemble_models = get_regression_ensemble(ticker) if not is_probability_mode else []
         # Track tín hiệu gốc (raw log-return) để confidence gate dùng sau
         raw_predicted_log_return = 0.0
@@ -2466,9 +2466,8 @@ def get_prediction(ticker: str):
             data_quality=data_quality,
         )
 
-        # Confidence Gate 
-        # Bước 5: Tính confidence score = |raw_predicted_log_return| / ref_std_train.
-        # Frontend có thể hiển thị badge "Tín hiệu mạnh" khi score >= threshold.
+        # Confidence Gate: score = |pred_log_return| / ref_std_train
+        # Frontend hiển thị badge "Tín hiệu mạnh" khi score >= threshold.
         confidence_gate_info = None
         if not is_probability_mode and raw_predicted_log_return is not None:
             ref_std = float((model_config or {}).get("train_log_return_std") or 0.0)
@@ -2692,7 +2691,6 @@ async def ai_assistant(request: Request):
         ticker = body.get("ticker")
         current_data = body.get("current_data")
 
-        # 1. AI context
         context = f"""
         Bạn là một Chuyên gia Kinh tế trưởng, Giám đốc Đầu tư, đồng thời là một Nhà phân tích Địa chính trị quốc tế xuất sắc.
 
@@ -2711,7 +2709,6 @@ async def ai_assistant(request: Request):
         - Bối cảnh thị trường: {current_data.get('market_context', 'Chưa có dữ liệu bối cảnh')}
         """
         
-        # 2. API key
         GROQ_API_KEY = os.getenv("GROQ_API_KEY")
         if not GROQ_API_KEY:
             raise HTTPException(
@@ -2719,7 +2716,6 @@ async def ai_assistant(request: Request):
                 detail="Chưa cấu hình GROQ_API_KEY trên máy chủ."
             )
         
-        # 3. Call API 
         url = "https://api.groq.com/openai/v1/chat/completions"
         
         payload = {
@@ -3022,7 +3018,7 @@ def get_foreign_ownership(ticker: str):
     try:
         stock = Vnstock().stock(symbol=ticker, source='KBS')
 
-        # 1. Cơ cấu sở hữu theo loại hình
+        # Cơ cấu sở hữu theo loại hình
         ownership_data = []
         try:
             df_own = stock.company.ownership()
@@ -3031,7 +3027,7 @@ def get_foreign_ownership(ticker: str):
         except Exception:
             pass
 
-        # 2. Danh sách cổ đông lớn
+        # Danh sách cổ đông lớn
         shareholders_data = []
         try:
             df_sh = stock.company.shareholders()
@@ -3040,7 +3036,7 @@ def get_foreign_ownership(ticker: str):
         except Exception:
             pass
 
-        # 3. Khối lượng mua/bán nước ngoài hôm nay
+        # Khối lượng mua/bán nước ngoài hôm nay
         foreign_trading = {}
         try:
             from vnstock.explorer.kbs.trading import Trading as KBSTrading

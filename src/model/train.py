@@ -18,13 +18,13 @@ from src.model.probability import build_peer_close_table
 
 SEED = 42
 WINDOW_SIZE = 30
-# Multi-seed ensemble: 5 seeds để giảm variance prediction (Bước 2)
+# Multi-seed ensemble: 5 seeds để giảm variance prediction (~1/√5)
 ENSEMBLE_SEEDS = [42, 123, 456, 789, 2024]
-# Horizon (Bước 4): 1 = daily T+1 (truyền thống); 5 = T+5 forward return
+# Horizon: 1 = daily T+1 (truyền thống); 5 = T+5 forward return
 # (SNR cao hơn daily — Signal-to-Noise Ratio lớn hơn vì noise trung bình triệt tiêu).
 HORIZON_DAYS_DEFAULT = 1
-# Feature set: 20 cols (đã được validate ở baseline DA 44.3%)
-# Cross-sectional features bị rollback do gây collapse variance ở Bước 1.
+# Feature set: 20 cols (đã validate ở baseline DA 44.3%)
+# Cross-sectional features bị rollback do gây collapse variance.
 REGRESSION_FEATURE_COLUMNS = [
     # Nhóm giá & volume gốc
     'open', 'high', 'low', 'close_winsorized', 'volume',
@@ -287,13 +287,10 @@ def train_model(ticker='VCB'):
         pickle.dump(config_payload, f)
 
 
-# ============================================================================
-# BƯỚC 2 — MULTI-SEED ENSEMBLE
-# ============================================================================
-# Mục tiêu: giảm variance của prediction bằng cách train N models với N seeds
-# khác nhau và lấy trung bình prediction. Đây là kỹ thuật industry dùng để
-# tăng độ ổn định (consistency) + cải thiện DA 2-4 điểm %.
-# ============================================================================
+# ---------------------------------------------------------------------------
+# Ensemble: train N models (N seeds khác nhau) → average prediction để giảm
+# variance và cải thiện DA 2-4 điểm % (theo lý thuyết Law of Large Numbers).
+# ---------------------------------------------------------------------------
 
 def train_model_ensemble(ticker: str = 'VCB',
                          seeds: list | None = None,
@@ -405,7 +402,7 @@ def train_model_ensemble(ticker: str = 'VCB',
         best_val_losses.append(best_val_loss)
         print(f"[ENSEMBLE] {ticker} seed={seed} best_val_loss={best_val_loss:.4f}")
 
-    # Bước 5: thống kê log-return train + threshold confidence gate (coverage 20%)
+    # Thống kê log-return train + tính threshold confidence gate (coverage 20%)
     train_log_return_clean = train_target.flatten()
     train_log_return_clean = train_log_return_clean[~np.isnan(train_log_return_clean)]
     train_log_return_std = float(np.std(train_log_return_clean)) if train_log_return_clean.size > 0 else 0.0
@@ -432,14 +429,14 @@ def train_model_ensemble(ticker: str = 'VCB',
         "target_type": "log_return",
         "seed": int(SEED),
         "target_scaler_range": [-1, 1],
-        # Bước 2: danh sách seeds để downstream tools load ensemble
+        # Danh sách seeds để downstream tools load ensemble
         "ensemble_seeds": [int(s) for s in seeds],
         "ensemble_best_val_losses": best_val_losses,
         "ensemble_dir": "models/ensemble",
-        # Bước 4: horizon của target (1 = T+1 daily, 5 = T+5 forward)
+        # Horizon: 1 = T+1 daily, 5 = T+5 forward
         "horizon_days": int(horizon_days),
         "ensemble_file_suffix": h_suffix,  # để downstream build đúng path
-        # Bước 5: confidence gate metadata
+        # Confidence gate metadata
         "train_log_return_std": train_log_return_std,
         "confidence_threshold_cov20": threshold_cov20,
     }
@@ -473,7 +470,7 @@ def load_ensemble_models(ticker: str):
         return [], cfg
 
     ensemble_dir = cfg.get('ensemble_dir', 'models/ensemble')
-    h_suffix = cfg.get('ensemble_file_suffix', '')  # Bước 4: suffix horizon
+    h_suffix = cfg.get('ensemble_file_suffix', '')  # suffix theo horizon
     models = []
     for seed in seeds:
         path = f'{ensemble_dir}/cnn_lstm_attn_{ticker.lower()}_v1{h_suffix}_s{seed}.h5'
@@ -499,15 +496,11 @@ def predict_ensemble(models: list, X: np.ndarray) -> np.ndarray:
     return preds.mean(axis=0)
 
 
-# ============================================================================
-# BƯỚC 3 — MULTI-TASK HEAD (REGRESSION + DIRECTION CLASSIFICATION)
-# ============================================================================
-# Model học đồng thời:
-#   1) Regression: magnitude của log-return (MSE)
-#   2) Direction: hướng lên/xuống/đi ngang (softmax 3 classes)
-# Composite loss ép backbone học representation phục vụ cả hai task → direction
-# signal mạnh hơn → kỳ vọng DA tăng 3-5 điểm %.
-# ============================================================================
+# ---------------------------------------------------------------------------
+# Multi-task head: model học đồng thời regression (log-return) + classification
+# (direction 3-class). Composite loss giúp backbone học signal phục vụ cả hai
+# task → DA kỳ vọng tăng 3-5 điểm %.
+# ---------------------------------------------------------------------------
 
 def _build_direction_labels(log_return: np.ndarray, neutral_band: float = 0.001) -> np.ndarray:
     """Sinh direction label 3-class từ log-return.

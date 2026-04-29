@@ -1,5 +1,5 @@
 """
-Backtest realistic cho mô hình CNN-LSTM-Attention (Bước 6).
+Backtest realistic cho mô hình CNN-LSTM-Attention.
 
 Mục tiêu: chuyển từ "DA% lý thuyết" sang các metric mà nhà đầu tư thực sự quan tâm:
   • Equity curve (đường vốn theo thời gian)
@@ -190,7 +190,7 @@ def run_backtest(ticker: str = 'VCB',
     train_end = int(n * 0.8)
     val_end = int(n * 0.9)
 
-    # Step 1: Fit temperature trên VAL set
+    # Fit temperature scaling trên VAL set
     val_data = data_values[train_end:val_end]
     val_target = target_values[train_end:val_end]
     val_prices = prices[train_end:val_end]
@@ -253,7 +253,7 @@ def run_backtest(ticker: str = 'VCB',
           f"val_thr={val_threshold:.4f} univ_thr={universal_threshold:.4f} "
           f"→ threshold={threshold:.4f} (coverage target {coverage*100:.0f}%)")
 
-    # Step 2: Predict trên TEST set
+    # Predict trên TEST set
     test_data = data_values[val_end:]
     test_target = target_values[val_end:]
     test_prices = prices[val_end:]
@@ -302,7 +302,7 @@ def run_backtest(ticker: str = 'VCB',
                   f"val/hybrid threshold filtered {signals_pass}/{test_confidence.size} test points; "
                   f"giảm xuống {floor_threshold:.4f} (min_test_coverage={min_test_coverage*100:.0f}%)")
 
-    # Step 3: Simulate trades
+    # Simulate trades
     # Strategy: long khi pred > 0 AND confidence >= threshold; exit sau horizon_days.
     # Non-overlapping: sau mỗi trade, bỏ qua horizon_days tiếp theo để tránh
     # ghi đè position (ở daily H=1 thì không bỏ qua gì).
@@ -367,7 +367,7 @@ def run_backtest(ticker: str = 'VCB',
         {'return_pct': (bh_equity[-1] / bh_equity[0] - 1)} if len(bh_equity) >= 2 else {'return_pct': 0.0}
     ], horizon_days)
 
-    # Step 4: Save plot + report
+    # Lưu biểu đồ equity curve
     os.makedirs(output_dir, exist_ok=True)
     plot_path = os.path.join(output_dir, f'{ticker.lower()}_equity_curve.png')
 

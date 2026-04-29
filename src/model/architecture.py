@@ -37,14 +37,11 @@ def build_cnn_lstm_attention_model(input_shape):
     
     model = Model(inputs=inputs, outputs=outputs, name="CNN_LSTM_Attention_Standard")
     
-    # BẮT BUỘC: Dùng MSE làm hàm mất mát để trừng phạt sai số lớn
-    model.compile(optimizer=tf.keras.optimizers.Adam(learning_rate=0.001), 
-                  loss='mean_squared_error', 
+    model.compile(optimizer=tf.keras.optimizers.Adam(learning_rate=0.001),
+                  loss='mean_squared_error',
                   metrics=['mae'])
-    
-    return model
 
-# python src\model\architecture.py (file to define the model architecture)
+    return model
 
 
 def _compile_model(model):

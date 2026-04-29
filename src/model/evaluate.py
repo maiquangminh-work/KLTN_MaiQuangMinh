@@ -78,7 +78,7 @@ def evaluate_model(ticker='VCB'):
     
     X_test, _ = create_sequences(scaled_test_data, scaled_test_target, window_size=30)
     
-    # Step 1: Ưu tiên ensemble nếu có, fallback single model
+    # Ưu tiên ensemble nếu có, fallback single model
     ensemble_models, _cfg = load_ensemble_models(ticker)
     if ensemble_models:
         print(f"[ENSEMBLE] Đánh giá với {len(ensemble_models)} models")
@@ -90,15 +90,14 @@ def evaluate_model(ticker='VCB'):
         predicted_scaled = model.predict(X_test)
     predicted_log_return = target_scaler.inverse_transform(predicted_scaled).flatten()
 
-    # Step 2: Toán tái tạo (Reconstruction) theo công thức log-return:
-    # Giá dự báo hôm nay = Giá thực tế hôm qua * exp(log_return dự đoán)
+    # Tái tạo giá từ log-return: P_t = P_{t-1} * exp(pred_log_return)
     previous_prices = test_prices[29 : 29 + len(predicted_log_return)]
-    actual_prices = test_prices[30 : 30 + len(predicted_log_return)] # Ground truth
+    actual_prices = test_prices[30 : 30 + len(predicted_log_return)]  # ground truth
 
     predicted_prices = previous_prices * np.exp(predicted_log_return)
     predicted_diff = predicted_prices - previous_prices  # delta giá dùng để tính DA
 
-    # Step 3: Đánh giá hiệu suất với các chỉ số RMSE, MAE, R² và MAPE
+    # Tính RMSE, MAE, R², MAPE, DA trên tập test
     rmse = np.sqrt(mean_squared_error(actual_prices, predicted_prices))
     mae = mean_absolute_error(actual_prices, predicted_prices)
     r2 = r2_score(actual_prices, predicted_prices)
