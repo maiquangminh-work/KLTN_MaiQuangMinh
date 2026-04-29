@@ -79,11 +79,11 @@ def update_database():
                 start_date = next_price_date
 
             if start_date > today_str:
-                print(f"✅ {ticker}: Dữ liệu đã được cập nhật mới nhất.")
+                print(f"{ticker}: Dữ liệu đã được cập nhật mới nhất.")
                 continue
                 
             # 2. Gọi API vnstock (CÚ PHÁP MỚI CỦA BẢN V3)
-            print(f"🔄 Đang kéo dữ liệu {ticker} từ {start_date} đến {today_str}...")
+            print(f"Đang kéo dữ liệu {ticker} từ {start_date} đến {today_str}...")
             
             # Khởi tạo đối tượng mã chứng khoán (KBS là nguồn ổn định nhất hiện tại)
             stock = Vnstock().stock(symbol=ticker, source='KBS')
@@ -153,7 +153,7 @@ def update_database():
             print(f"✅ {ticker}: Đã chèn thêm {len(records)} dòng vào Database.")
             
         except Exception as e:
-            print(f"❌ Lỗi khi cập nhật {ticker}: {e}")
+            print(f"Lỗi khi cập nhật {ticker}: {e}")
             db.rollback()
             
     db.close()
@@ -163,11 +163,11 @@ def update_database():
 schedule.every().day.at("01:00").do(update_database)
 
 if __name__ == "__main__":
-    print("🚀 Hệ thống Tự động cập nhật Dữ liệu đã khởi động!")
+    print("Hệ thống Tự động cập nhật Dữ liệu đã khởi động!")
     print("Đang chạy thử lần đầu tiên để đồng bộ Database...")
     update_database() 
     
-    print("⏳ Đang chờ đến lịch chạy tiếp theo (01:00 AM hàng ngày)... Nhấn Ctrl+C để thoát.")
+    print("Đang chờ đến lịch chạy tiếp theo (01:00 AM hàng ngày)... Nhấn Ctrl+C để thoát.")
     while True:
         schedule.run_pending()
         time.sleep(60)
