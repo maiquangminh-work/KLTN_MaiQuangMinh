@@ -9,7 +9,7 @@
 Dự án được chốt theo hai lớp phạm vi:
 
 - **Phạm vi nghiên cứu chính:** 3 mã ngân hàng quốc doanh **VCB, BID, CTG**. Đây là nhóm dùng để trình bày trọng tâm khóa luận — đánh giá mô hình, so sánh kiến trúc, chạy walk-forward và kiểm định thống kê.
-- **Phần mở rộng hệ thống demo:** Dashboard hỗ trợ thêm **MBB, TCB, VPB, ACB, HDB, SHB, VIB** để chứng minh khả năng mở rộng. Khi trình bày học thuật ưu tiên 3 mã chính; khi demo có thể giới thiệu đủ 10 mã.
+- **Phần mở rộng hệ thống demo:** Dashboard hỗ trợ thêm **MBB, TCB, VPB, ACB, HDB, SHB, VIB** để chứng minh khả năng mở rộng. Khi trình bày học thuật ưu tiên 3 mã chính; khi demo giới thiệu đủ 10 mã.
 
 ## Giới thiệu
 
