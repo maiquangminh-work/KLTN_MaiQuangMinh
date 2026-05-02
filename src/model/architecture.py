@@ -151,7 +151,7 @@ def build_cnn_lstm_attention_multitask_model(input_shape, num_direction_classes=
       - regression_output: 1 unit linear — dự báo log-return magnitude (scaled)
       - direction_output: 3 units softmax — phân loại hướng {0:down, 1:flat, 2:up}
 
-    Rationale (tăng DA):
+    Lý do dùng multi-task (tăng DA):
       - Bắt model học 'hướng' rõ ràng qua classifier head → tín hiệu mạnh hơn cho DA
       - Magnitude regression vẫn được giữ để tái tạo giá
       - Shared representation giúp hai task regularize lẫn nhau
