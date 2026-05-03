@@ -19,5 +19,14 @@ python-dotenv>=1.0.0
 psycopg2-binary>=2.9.9
 sqlalchemy>=2.0.0
 
+# --- Trực quan hóa ---
+matplotlib>=3.6.0
+
+# --- Thống kê ---
+scipy>=1.10.0
+
+# --- Lập lịch ---
+schedule>=1.2.0
+
 # --- Tiện ích ---
 jupyter>=1.0.0
