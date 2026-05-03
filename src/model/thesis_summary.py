@@ -1,5 +1,5 @@
 """
-Thesis summary — tổng hợp toàn bộ kết quả cho luận văn (Bước cuối).
+Thesis summary — tổng hợp toàn bộ kết quả cho luận văn.
 
 Kết hợp:
   • DA lag-1 (persistence) từ `diagnostic_lag1.py`

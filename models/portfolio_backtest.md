@@ -6,16 +6,16 @@
 
 | Metric | Portfolio (top-N) | Benchmark EW(10) | Chênh lệch |
 |--------|-------------------|------------------|------------|
-| Total return | 35.78% | 25.46% | +10.32pp |
-| Annualized return | 37.87% | 26.89% | +10.98pp |
-| Annualized vol | 16.81% | 19.65% | — |
-| Sharpe ratio | **2.25** | 1.37 | +0.88 |
-| Max drawdown | -6.95% | -11.72% | — |
-| Information ratio | **0.583** | — | — |
-| Hit rate | 60.0% | — | — |
-| # bars (có trade) | 40 / 48 | — | — |
-| Avg tickers held | 1.54 / 3 | — | — |
-| Avg turnover | 21.5% | — | — |
+| Total return | 55.38% | 25.23% | +30.15pp |
+| Annualized return | 60.41% | 27.28% | +33.13pp |
+| Annualized vol | 18.70% | 25.34% | — |
+| Sharpe ratio | **3.23** | 1.08 | +2.15 |
+| Max drawdown | -5.80% | -17.29% | — |
+| Information ratio | **1.253** | — | — |
+| Hit rate | 67.4% | — | — |
+| # bars (có trade) | 43 / 47 | — | — |
+| Avg tickers held | 1.60 / 3 | — | — |
+| Avg turnover | 19.1% | — | — |
 
 ## Diễn giải
 

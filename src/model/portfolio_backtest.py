@@ -1,5 +1,5 @@
 """
-Portfolio-level Backtest (Bước C3).
+Portfolio-level Backtest.
 
 Mục tiêu: Chuyển từ đánh giá **per-ticker** (10 chuỗi tách biệt) sang đánh giá
 **portfolio** — mỗi ngày re-balance chọn top-N mã mô hình tự tin nhất, hold H ngày,

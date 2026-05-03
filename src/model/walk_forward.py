@@ -1,5 +1,5 @@
 """
-Walk-Forward Validation (Bước B1).
+Walk-Forward Validation.
 
 Mục tiêu: Loại bỏ nghi vấn cherry-pick split. Thay vì báo cáo DA trên 1 split
 80/10/10 cố định, ta trượt cửa sổ qua nhiều thời kỳ và báo cáo **mean ± std**

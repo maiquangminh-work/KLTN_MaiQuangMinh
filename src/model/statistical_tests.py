@@ -1,13 +1,13 @@
 """
-Statistical Significance Tests for CNN-LSTM-Attention (Bước C2).
+Statistical Significance Tests for CNN-LSTM-Attention.
 
 Trả lời câu hỏi hội đồng: "Kết quả có thực sự khác ngẫu nhiên / khác baseline không?"
 
 Gồm 4 bộ test:
-  1. Diebold-Mariano (DM) — so sánh prediction error vs baseline lag-1 (Newey-West HAC std)
-  2. Pesaran-Timmermann (PT) — directional predictability độc lập hay không
-  3. Bootstrap 95% CI — cho Directional Accuracy và Sharpe Ratio
-  4. Multiple testing correction — Bonferroni/Holm cho 10 ticker
+  - Diebold-Mariano (DM) — so sánh prediction error vs baseline lag-1 (Newey-West HAC std)
+  - Pesaran-Timmermann (PT) — directional predictability độc lập hay không
+  - Bootstrap 95% CI — cho Directional Accuracy và Sharpe Ratio
+  - Multiple testing correction — Bonferroni/Holm cho 10 ticker
 
 Input: cùng data pipeline với thesis_summary.py (ensemble H=5, temperature-scaled).
 Output:
@@ -468,19 +468,19 @@ def main():
         err_model = y_true - y_pred
         err_base = y_true - y_base
 
-        # 1. Diebold-Mariano (squared + absolute loss)
+        # Diebold-Mariano (squared + absolute loss)
         dm_sq = diebold_mariano(err_model, err_base, h=h, loss='squared')
         dm_abs = diebold_mariano(err_model, err_base, h=h, loss='absolute')
 
-        # 2. Pesaran-Timmermann
+        # Pesaran-Timmermann
         pt_model = pesaran_timmermann(y_true, y_pred)
         pt_base = pesaran_timmermann(y_true, y_base)
 
-        # 3. Bootstrap CI for DA
+        # Bootstrap CI for DA
         ci_da_model = bootstrap_ci_paired(y_true, y_pred, _da, n_boot=10000)
         ci_da_base = bootstrap_ci_paired(y_true, y_base, _da, n_boot=10000)
 
-        # 3b. Gated analysis — confidence gate @ cov 20% + 30%
+        # Gated analysis — confidence gate @ cov 20% + 30%
         # Sau gating, predictions thường dồn về 1 hướng → PT degenerate.
         # Dùng binomial test (H0: DA=0.5) thay thế vì phù hợp hơn khi ít variation.
         ref_std_local = float(np.std(y_true)) if np.std(y_true) > 1e-9 else 0.01
@@ -505,7 +505,7 @@ def main():
                     'da_ci_high': ci_g['upper'],
                 }
 
-        # 4. Bootstrap CI for Sharpe on "signal returns" (long when pred>0, short when <0)
+        # Bootstrap CI for Sharpe on "signal returns" (long when pred>0, short when <0)
         # Theoretical long-short return = sign(pred) * true_return
         signal_returns_model = np.sign(y_pred) * y_true
         signal_returns_base = np.sign(y_base) * y_true
