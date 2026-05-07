@@ -92,7 +92,7 @@ def update_database():
             df = _fetch_history_with_optional_foreign(stock, start_date, today_str)
             
             if df is None or df.empty:
-                print(f"⚠️ {ticker}: Không có dữ liệu giao dịch mới (có thể là ngày nghỉ).")
+                print(f" {ticker}: Không có dữ liệu giao dịch mới (có thể là ngày nghỉ).")
                 continue
                 
             # Chuẩn hóa tên cột về chữ thường để tránh lỗi viết hoa/thường (Time vs time)

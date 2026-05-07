@@ -1,11 +1,4 @@
-"""
-Script tạo file features.csv cho mỗi mã cổ phiếu.
-Đọc từ database SQLite → tính các chỉ báo kỹ thuật → lưu ra CSV.
 
-Cách chạy:
-    python src/data_pipeline/preprocess.py                  # Tất cả mã
-    python src/data_pipeline/preprocess.py --tickers MBB TCB # Chỉ MBB, TCB
-"""
 import os
 import sys
 import numpy as np
@@ -18,7 +11,7 @@ TICKERS = ['VCB', 'BID', 'CTG', 'MBB', 'TCB', 'VPB', 'ACB', 'HDB', 'SHB', 'VIB']
 OUTPUT_DIR = os.path.join(os.path.dirname(__file__), '../../data/processed')
 OPTIONAL_FOREIGN_COLUMNS = ['foreign_buy_volume', 'foreign_sell_volume', 'foreign_net_volume']
 
-
+# Công thức tính RSI theo phương pháp trung bình lũy thừa (EMA)
 def compute_rsi(series, period=14):
     """Tính RSI theo phương pháp trung bình lũy thừa."""
     delta = series.diff()
@@ -27,7 +20,7 @@ def compute_rsi(series, period=14):
     rs = gain / loss
     return 100 - (100 / (1 + rs))
 
-
+# Hàm winsorize theo cửa sổ lùi để tránh leakage
 def causal_winsorize(series, window=252, lower_q=0.01, upper_q=0.99, min_periods=20):
     """
     Winsorize theo cửa sổ lùi (chỉ dùng dữ liệu quá khứ) để giảm leakage.
@@ -38,7 +31,7 @@ def causal_winsorize(series, window=252, lower_q=0.01, upper_q=0.99, min_periods
     upper = rolling_upper.combine_first(series.expanding(min_periods=1).max())
     return series.clip(lower=lower, upper=upper)
 
-
+# Hàm chính để xử lý từng mã cổ phiếu
 def process_ticker(ticker):
     """Tiền xử lý dữ liệu cho một mã cổ phiếu."""
     print(f"  Đang xử lý {ticker}...")
@@ -53,7 +46,7 @@ def process_ticker(ticker):
     db.close()
 
     if not records:
-        print(f"  ⚠️ {ticker}: Không có dữ liệu trong database. Bỏ qua.")
+        print(f" {ticker}: Không có dữ liệu trong database. Bỏ qua.")
         return False
 
     df = pd.DataFrame([{
@@ -97,7 +90,7 @@ def process_ticker(ticker):
     os.makedirs(OUTPUT_DIR, exist_ok=True)
     out_path = os.path.join(OUTPUT_DIR, f'{ticker}_features.csv')
     df.to_csv(out_path, index=False)
-    print(f"  ✅ {ticker}: Lưu {len(df)} dòng → {out_path}")
+    print(f" {ticker}: Lưu {len(df)} dòng → {out_path}")
     return True
 
 
@@ -107,9 +100,9 @@ if __name__ == '__main__':
     parser.add_argument('--tickers', nargs='+', default=TICKERS, help='Danh sách mã (mặc định: tất cả)')
     args = parser.parse_args()
 
-    print("🔄 Bắt đầu tiền xử lý dữ liệu...\n")
+    print(" Bắt đầu tiền xử lý dữ liệu...\n")
     success = 0
     for t in args.tickers:
         if process_ticker(t.upper()):
             success += 1
-    print(f"\n🎉 Hoàn tất! {success}/{len(args.tickers)} mã được xử lý thành công.")
+    print(f"\n Hoàn tất! {success}/{len(args.tickers)} mã được xử lý thành công.")
