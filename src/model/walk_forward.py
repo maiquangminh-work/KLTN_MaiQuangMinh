@@ -19,7 +19,7 @@ Thiết kế window:
   - Giữ cùng architecture & loss VarianceMatchingMSE
 
 Cách chạy:
-    cd D:\\.vscode\\KLTN\\Demo
+    cd D:\\.vscode\\KLTN_MaiQuangMinh\\src
     python -m src.model.walk_forward                    # 3 ticker default
     python -m src.model.walk_forward --tickers VCB      # 1 ticker
     python -m src.model.walk_forward --n_windows 5      # ít windows hơn

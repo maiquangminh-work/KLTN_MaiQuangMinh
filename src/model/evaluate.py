@@ -94,6 +94,7 @@ def evaluate_model(ticker='VCB'):
     previous_prices = test_prices[29 : 29 + len(predicted_log_return)]
     actual_prices = test_prices[30 : 30 + len(predicted_log_return)]  # ground truth
 
+    # Tái tạo giá dự báo từ log-return
     predicted_prices = previous_prices * np.exp(predicted_log_return)
     predicted_diff = predicted_prices - previous_prices  # delta giá dùng để tính DA
 

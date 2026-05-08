@@ -12,7 +12,7 @@ Xuất:
   • models/thesis_summary_plot.png — bar chart so sánh DA vs baseline
 
 Cách chạy:
-    cd D:\\.vscode\\KLTN\\Demo
+    cd D:\\.vscode\\KLTN_MaiQuangMinh\\src
     python -m src.model.thesis_summary
 """
 from __future__ import annotations

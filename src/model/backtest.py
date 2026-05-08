@@ -18,7 +18,7 @@ Giả lập giao dịch:
   - Không stop-loss (để tách bạch signal strength vs risk management)
 
 Cách chạy:
-    cd D:\\.vscode\\KLTN\\Demo
+    cd D:\\.vscode\\KLTN_MaiQuangMinh\\src
     python -m src.model.backtest
 
 Hoặc dùng programmatic:

@@ -20,7 +20,7 @@ def compute_rsi(series, period=14):
     rs = gain / loss
     return 100 - (100 / (1 + rs))
 
-# Hàm winsorize theo cửa sổ lùi để tránh leakage
+# Hàm winsorize theo cửa sổ lùi để tránh bị lỗi do thiếu dữ liệu ban đầu
 def causal_winsorize(series, window=252, lower_q=0.01, upper_q=0.99, min_periods=20):
     """
     Winsorize theo cửa sổ lùi (chỉ dùng dữ liệu quá khứ) để giảm leakage.

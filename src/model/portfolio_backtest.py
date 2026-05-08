@@ -25,7 +25,7 @@ Pipeline:
   5. Metrics: Annualized Return, Vol, Sharpe, MDD, HitRate, IR vs benchmark
 
 Cách chạy:
-    cd D:/.vscode/KLTN/Demo
+    cd D:\\.vscode\\KLTN_MaiQuangMinh\\src
     python -m src.model.portfolio_backtest
     python -m src.model.portfolio_backtest --top_n 3 --hold_days 5
     python -m src.model.portfolio_backtest --top_n 5 --min_signal 0.0

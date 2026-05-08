@@ -12,7 +12,7 @@ Cách kiểm tra:
   - Lag-1 correlation cao (>0.95)   -> persistence problem rõ rệt
 
 Cách chạy:
-  cd D:\\.vscode\\KLTN\\Demo
+    cd D:\\.vscode\\KLTN_MaiQuangMinh\\src
   python -m src.model.diagnostic_lag1
 """
 import os

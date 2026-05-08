@@ -16,7 +16,7 @@ Output:
   • stdout: in tóm tắt
 
 Cách chạy:
-    cd D:\\.vscode\\KLTN\\Demo
+    cd D:\\.vscode\\KLTN_MaiQuangMinh\\src
     python -m src.model.statistical_tests
 """
 from __future__ import annotations
