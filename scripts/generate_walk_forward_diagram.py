@@ -4,7 +4,7 @@ from pathlib import Path
 from PIL import Image, ImageDraw, ImageFont
 
 
-ROOT = Path(r"D:\.vscode\KLTN\Demo")
+ROOT = Path(r"D:\.vscode\KLTN_MaiQuangMinh\src")
 OUT_DIR = ROOT / "figures"
 PNG_PATH = OUT_DIR / "walk_forward_validation_5_windows.png"
 SVG_PATH = OUT_DIR / "walk_forward_validation_5_windows.svg"

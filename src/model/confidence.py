@@ -30,7 +30,7 @@ from __future__ import annotations
 
 import numpy as np
 
-
+# Hàm để fit temperature T trên validation set, dựa vào std của pred vs true
 def fit_temperature(pred_log_return: np.ndarray,
                     true_log_return: np.ndarray) -> float:
     """Fit temperature T sao cho pred * T có std khớp với true std.
@@ -51,6 +51,7 @@ def fit_temperature(pred_log_return: np.ndarray,
     if pred.size == 0 or true.size == 0:
         return 1.0
 
+    # Tính std của pred và true
     std_pred = float(np.std(pred))
     std_true = float(np.std(true))
     if std_pred < 1e-12:
@@ -59,7 +60,7 @@ def fit_temperature(pred_log_return: np.ndarray,
     # Giới hạn T trong [0.5, 5.0] để tránh overshoot quá mức
     return float(np.clip(T, 0.5, 5.0))
 
-
+# Hàm để tính confidence score dựa trên magnitude đã scale
 def compute_confidence_scores(pred_log_return: np.ndarray,
                               reference_std: float | None = None) -> np.ndarray:
     """Tính confidence score = |pred| / reference_std.
@@ -77,7 +78,7 @@ def compute_confidence_scores(pred_log_return: np.ndarray,
         reference_std = float(np.std(pred) + 1e-12)
     return np.abs(pred) / float(reference_std)
 
-
+# Hàm để tìm threshold tối ưu cho các mức coverage khác nhau, report DA tương ứng
 def find_optimal_threshold(pred_log_return: np.ndarray,
                            true_log_return: np.ndarray,
                            coverage_targets=(0.5, 0.3, 0.2, 0.1),
@@ -129,7 +130,7 @@ def find_optimal_threshold(pred_log_return: np.ndarray,
         }
     return results
 
-
+# Hàm để đánh giá gate tại một threshold cụ thể, trả về DA và stats trên subset đó
 def evaluate_gate(pred_log_return: np.ndarray,
                   true_log_return: np.ndarray,
                   threshold: float,

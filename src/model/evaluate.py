@@ -21,6 +21,7 @@ from src.model.train import (
     predict_ensemble,
 )
 
+# Hàm tạo chuỗi dữ liệu cho mô hình dựa trên window size (số ngày sử dụng để dự báo ngày tiếp theo)
 def create_sequences(data, target, window_size=30):
     X, y = [], []
     for i in range(len(data) - window_size):
@@ -28,6 +29,7 @@ def create_sequences(data, target, window_size=30):
         y.append(target[i + window_size])
     return np.array(X), np.array(y)
 
+# Hàm chính để đánh giá mô hình trên tập test và tái tạo đồ thị so sánh giá thực tế và dự báo
 def evaluate_model(ticker='VCB'):
     print(f"Đang đánh giá và tái tạo đồ thị cho {ticker}...\n")
     

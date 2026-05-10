@@ -6,7 +6,7 @@ của chuỗi log-return, sử dụng trong mục 2.1.5 của báo cáo KLTN.
 Kết quả kiểm định Augmented Dickey-Fuller được hiển thị trực tiếp trên hình.
 
 Cách chạy:
-    cd D:/.vscode/KLTN/Demo/scripts
+    cd D:/.vscode/KLTN_MaiQuangMinh/src/scripts
     PYTHONIOENCODING=utf-8 python fig_2_3_stationarity.py
 
 Kết quả:

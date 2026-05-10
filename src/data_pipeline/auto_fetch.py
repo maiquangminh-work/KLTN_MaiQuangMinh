@@ -16,7 +16,7 @@ TICKERS = ['VCB', 'BID', 'CTG', 'MBB', 'TCB', 'VPB', 'ACB', 'HDB', 'SHB', 'VIB']
 OPTIONAL_FOREIGN_COLUMNS = ['foreign_buy_volume', 'foreign_sell_volume', 'foreign_net_volume']
 BACKFILL_FOREIGN_HISTORY = os.getenv('BACKFILL_FOREIGN_HISTORY', '0').strip().lower() in {'1', 'true', 'yes', 'on'}
 
-
+# Hàm phụ để xử lý giá trị có thể thiếu của các cột foreign volume
 def _optional_int(row, column_name):
     if column_name not in row.index:
         return None
@@ -28,7 +28,7 @@ def _optional_int(row, column_name):
     except Exception:
         return None
 
-
+# Hàm phụ để tìm bản ghi đầu tiên thiếu dữ liệu foreign volume (nếu có)
 def _first_missing_foreign_record(db, ticker):
     return (
         db.query(StockPrice)
@@ -43,7 +43,8 @@ def _first_missing_foreign_record(db, ticker):
         .first()
     )
 
-
+# Hàm phụ để trích xuất lịch sử giá với khả năng xử lý linh hoạt các cột 
+# foreign volume tùy theo nguồn dữ liệu
 def _fetch_history_with_optional_foreign(stock, start_date, end_date):
     try:
         return stock.quote.history(
@@ -55,6 +56,7 @@ def _fetch_history_with_optional_foreign(stock, start_date, end_date):
     except TypeError:
         return stock.quote.history(start=start_date, end=end_date, interval='1D')
 
+# Hàm chính để cập nhật dữ liệu từ API và lưu vào Database
 def update_database():
     print(f"\n[{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] Bắt đầu tiến trình cập nhật dữ liệu...")
     db = SessionLocal()

@@ -12,6 +12,7 @@ export default function AboutPage() {
     <AboutSection
       language={language}
       onOpenChart={() => navigate(`/chart/${ticker}`)}
+      onOpenTicker={(targetTicker) => navigate(`/chart/${targetTicker}`)}
       onOpenNews={() => navigate(`/news/${ticker}`)}
     />
   );

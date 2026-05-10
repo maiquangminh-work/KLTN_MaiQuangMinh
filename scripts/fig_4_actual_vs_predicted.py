@@ -4,7 +4,7 @@ fig_4_actual_vs_predicted.py
 Tạo biểu đồ thesis-quality: So sánh giá đóng cửa thực tế và dự báo
 cho 3 mã ngân hàng nhà nước: VCB, BID, CTG.
 
-Chạy từ thư mục Demo/:
+Chạy từ thư mục src/:
     python scripts/fig_4_actual_vs_predicted.py
 
 Output: scripts/figures/hinh_4_x_actual_vs_predicted_{ticker}.png  (300 DPI)

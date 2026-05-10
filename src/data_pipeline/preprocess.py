@@ -21,6 +21,8 @@ def compute_rsi(series, period=14):
     return 100 - (100 / (1 + rs))
 
 # Hàm winsorize theo cửa sổ lùi để tránh bị lỗi do thiếu dữ liệu ban đầu
+# Sau khi trừ đi cuối tuần khoảng 104 ngày và 9 ngày nghỉ lễ thì 1 năm 
+# có xấp xỉ 252 ngày giao dịch
 def causal_winsorize(series, window=252, lower_q=0.01, upper_q=0.99, min_periods=20):
     """
     Winsorize theo cửa sổ lùi (chỉ dùng dữ liệu quá khứ) để giảm leakage.
@@ -66,7 +68,7 @@ def process_ticker(ticker):
     # Điền dữ liệu theo chiều thời gian để không nhìn tương lai.
     for col in ['open', 'high', 'low', 'close', 'volume']:
         df[col] = pd.to_numeric(df[col], errors='coerce')
-        df[col] = df[col].ffill()
+        df[col] = df[col].ffill() # Điền theo chiều thời gian (forward fill) để tránh nhìn thấy dữ liệu tương lai
 
     for col in OPTIONAL_FOREIGN_COLUMNS:
         if col in df.columns and not df[col].isna().all():

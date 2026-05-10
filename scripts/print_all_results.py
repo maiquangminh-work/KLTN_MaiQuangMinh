@@ -1,6 +1,6 @@
 """
 In toàn bộ số liệu cần thiết cho Chapter IV.
-Chạy từ thư mục Demo/:
+Chạy từ thư mục src/:
     python scripts/print_all_results.py
 """
 import os, sys
@@ -11,10 +11,8 @@ import numpy as np
 import pandas as pd
 import pickle
 
-# ─────────────────────────────────────────────────────────────
 # BẢNG 4.1 — Kết quả hồi quy (RMSE, MAE, MAPE, R²)
 # Source: chạy inference ensemble trên tập test 10%
-# ─────────────────────────────────────────────────────────────
 print("=" * 60)
 print("BANG 4.1: Ket qua du bao hoi quy (tap test ngoai mau)")
 print("=" * 60)
@@ -75,10 +73,8 @@ for t in ["VCB","BID","CTG"]:
     rmse, mae, mape, r2, da = get_regression_metrics(t)
     print(f"{t:<8} {rmse:>12,.0f} {mae:>12,.0f} {mape:>10.2f} {r2:>8.4f} {da:>8.2f}")
 
-# ─────────────────────────────────────────────────────────────
 # BẢNG 4.2 & 4.3 — Walk-Forward DA_full và DA@cov20
 # Source: models/walkforward_ensemble/{ticker}_windows.csv
-# ─────────────────────────────────────────────────────────────
 print()
 print("=" * 60)
 print("BANG 4.2: DA_full (%) tung cua so Walk-Forward")
@@ -129,10 +125,8 @@ for t in ["VCB","BID","CTG"]:
     print(f"{avg:>9.1f}%", end="")
 print()
 
-# ─────────────────────────────────────────────────────────────
 # BẢNG 4.4 / 4.5 / 4.6 — Ablation Study
 # Source: models/ablation/{ticker}/{ticker}_ablation_results.csv
-# ─────────────────────────────────────────────────────────────
 label_map = {
     "lstm_only":          "LSTM only",
     "cnn_only":           "CNN only",

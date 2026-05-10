@@ -33,6 +33,8 @@ def build_cnn_lstm_attention_model(input_shape):
     # Tầng kết nối với Dropout 0.2
     x = Dense(units=32, activation='relu', name="Dense_Layer")(x)
     x = Dropout(0.2, name="Dropout_1")(x)
+    
+    # Output layer với 1 unit linear (Dense với activation 'linear')
     outputs = Dense(units=1, activation='linear', name="Output_Layer")(x)
     
     model = Model(inputs=inputs, outputs=outputs, name="CNN_LSTM_Attention_Standard")

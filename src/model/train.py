@@ -16,15 +16,19 @@ from src.model.architecture import build_cnn_lstm_attention_model
 from src.model.losses import VarianceMatchingMSE
 from src.model.probability import build_peer_close_table
 
+# Global constants và hàm phụ cho training và ensemble. 
 SEED = 42
 WINDOW_SIZE = 30
+
 # Multi-seed ensemble: 5 seeds để giảm variance prediction (~1/√5)
 ENSEMBLE_SEEDS = [42, 123, 456, 789, 2024]
+
 # Horizon: 1 = daily T+1 (truyền thống); 5 = T+5 forward return
 # (SNR cao hơn daily — Signal-to-Noise Ratio lớn hơn vì noise trung bình triệt tiêu).
 HORIZON_DAYS_DEFAULT = 1
-# Feature set: 20 cols (đã validate ở baseline DA 44.3%)
-# Cross-sectional features bị rollback do gây collapse variance.
+
+# Feature set: 20 cols giá, volume, technical indicators, động lượng, biến động, vị trí giá-vs-MA..
+# Cross-sectional features bị rollback do gây collapse variance
 REGRESSION_FEATURE_COLUMNS = [
     # Nhóm giá & volume gốc
     'open', 'high', 'low', 'close_winsorized', 'volume',
@@ -41,7 +45,6 @@ REGRESSION_FEATURE_COLUMNS = [
 
 def _augment_regression_features(df: pd.DataFrame) -> pd.DataFrame:
     """Bổ sung các cột feature engineered mà preprocess.py chưa tính.
-
     Giữ tương thích ngược: nếu cột đã có sẵn trong CSV, không ghi đè.
     """
     close = df['close_winsorized']
@@ -98,8 +101,6 @@ def _augment_cross_sectional_features(df: pd.DataFrame,
       - z_return_1d_vs_peer : z-score vs phân phối peer theo ngày
       - rel_volatility_20d : volatility ticker / volatility benchmark
 
-    Yêu cầu: df đã chạy _augment_regression_features để có return_1d/5d,
-    volatility_20d.
     """
     ticker = ticker.upper()
     result = df.copy()
@@ -343,7 +344,7 @@ def train_model_ensemble(ticker: str = 'VCB',
 
     # Fit scaler 1 lần — dùng chung cho tất cả seeds
     feature_scaler = MinMaxScaler(feature_range=(0, 1))
-    target_scaler = MaxAbsScaler()
+    target_scaler = MaxAbsScaler() # Sử dụng MaxAbsScaler để giữ nguyên zero-centered target (log-return có thể âm dương)
     scaled_train_data = feature_scaler.fit_transform(train_data)
     scaled_train_target = target_scaler.fit_transform(train_target)
     scaled_val_data = feature_scaler.transform(val_data)
