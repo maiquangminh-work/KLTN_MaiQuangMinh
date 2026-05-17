@@ -51,15 +51,15 @@ class VarianceMatchingMSE(tf.keras.losses.Loss):
         y_true = tf.cast(y_true, tf.float32)
         y_pred = tf.cast(y_pred, tf.float32)
 
-        # --- 1. MSE cơ bản ---
+        # 1. MSE cơ bản
         mse = tf.reduce_mean(tf.square(y_true - y_pred))
 
-        # --- 2. Std matching (std ổn định hơn variance vì chênh magnitude thấp hơn) ---
+        # 2. Std matching (std ổn định hơn variance vì chênh magnitude thấp hơn)
         std_true = tf.sqrt(tf.math.reduce_variance(y_true) + 1e-8)
         std_pred = tf.sqrt(tf.math.reduce_variance(y_pred) + 1e-8)
         var_gap = tf.nn.relu(std_true - std_pred) / (std_true + 1e-8)
 
-        # --- 3. Direction mismatch (smooth sign) ---
+        # 3. Direction mismatch (smooth sign)
         tt = tf.tanh(y_true * self.direction_temp)
         tp = tf.tanh(y_pred * self.direction_temp)
         direction_mismatch = tf.reduce_mean(tf.square(tt - tp))

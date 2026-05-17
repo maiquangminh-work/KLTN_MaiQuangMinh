@@ -45,14 +45,14 @@ from scipy import stats
 WINDOW_SIZE = 30
 
 
-# ──────────────────────────────────────────────────────────────────────
 #  Core statistical tests
-# ──────────────────────────────────────────────────────────────────────
-
+# Hàm tính các test thống kê: Diebold-Mariano, Pesaran-Timmermann, binomial test cho gated analysis, bootstrap CI, và multiple testing correction (Holm-Bonferroni + Benjamini-Hochberg).
 def diebold_mariano(errors_a: np.ndarray,
                     errors_b: np.ndarray,
                     h: int = 1,
-                    loss: str = 'squared') -> dict:
+                    loss: str = 'squared') -> dict:  
+    
+    # Tính Diebold-Mariano test giữa model A và baseline B, với Newey-West HAC variance.
     """Diebold-Mariano test comparing forecast accuracy of A vs B.
 
     H0: E[L(A) - L(B)] = 0 (equal accuracy)
@@ -125,7 +125,8 @@ def diebold_mariano(errors_a: np.ndarray,
         'interpretation': interpret,
     }
 
-
+# Hàm đánh giá directional accuracy tại nhiều threshold confidence khác nhau,
+# trả về dict với DA và stats cho mỗi threshold.
 def binomial_da_test(y_true: np.ndarray, y_pred: np.ndarray,
                      p0: float = 0.5) -> dict:
     """Exact binomial test H0: P(sign(y_true) == sign(y_pred)) == p0.
@@ -200,7 +201,8 @@ def pesaran_timmermann(y_true: np.ndarray, y_pred: np.ndarray) -> dict:
         'significant_at_5pct': bool(p_value < 0.05),
     }
 
-
+# Hàm tính kiểm định Bootstrap Confidence Interval cho DA hoặc Sharpe Ratio, 
+# với resampling paired (cho DA) hoặc unpaired (cho Sharpe).
 def bootstrap_ci(values: np.ndarray,
                  stat_fn,
                  n_boot: int = 10000,
@@ -224,7 +226,8 @@ def bootstrap_ci(values: np.ndarray,
     return {'point': point, 'lower': lower, 'upper': upper,
             'mean': float(estimates.mean()), 'std': float(estimates.std())}
 
-
+# Tính bootstrap CI cho statistic cần cả y_true + y_pred 
+# (VD Directional Accuracy), với resampling paired.
 def bootstrap_ci_paired(y_true: np.ndarray,
                         y_pred: np.ndarray,
                         stat_fn,
@@ -240,16 +243,17 @@ def bootstrap_ci_paired(y_true: np.ndarray,
     if n < 2:
         return {'point': float('nan'), 'lower': float('nan'), 'upper': float('nan')}
     estimates = np.empty(n_boot)
-    for b in range(n_boot):
+    for b in range(n_boot):                     # vòng lặp 10000 lần
         idx = rng.integers(0, n, n)
         estimates[b] = stat_fn(y_true[idx], y_pred[idx])
-    lower = float(np.quantile(estimates, alpha / 2))
-    upper = float(np.quantile(estimates, 1 - alpha / 2))
-    point = float(stat_fn(y_true, y_pred))
+    lower = float(np.quantile(estimates, alpha / 2))        # ← percentile(da_boot, 2.5%)
+    upper = float(np.quantile(estimates, 1 - alpha / 2))    # ← percentile(da_boot, 97.5%)
+    point = float(stat_fn(y_true, y_pred))                  # DA thực (không resample)
     return {'point': point, 'lower': lower, 'upper': upper,
             'mean': float(estimates.mean()), 'std': float(estimates.std())}
 
-
+# Hàm tính kiểm định Holm-Bonferroni và Benjamini-Hochberg cho nhiều p-value 
+# song song, trả về mảng bool reject H0 hay không.
 def holm_bonferroni(pvalues: np.ndarray, alpha: float = 0.05) -> np.ndarray:
     """Holm-Bonferroni step-down — kiểm soát FWER cho m test song song.
 
@@ -289,9 +293,7 @@ def benjamini_hochberg(pvalues: np.ndarray, alpha: float = 0.05) -> np.ndarray:
     return reject
 
 
-# ──────────────────────────────────────────────────────────────────────
-#  Data pipeline (reuse from thesis_summary)
-# ──────────────────────────────────────────────────────────────────────
+#  Data pipeline
 
 def _resolve_cfg(ticker: str) -> dict:
     cfg_path = f'models/{ticker.lower()}_reg_config.pkl'
@@ -400,6 +402,7 @@ def load_test_predictions(ticker: str) -> dict:
         test_pred_log = test_pred_log[:N]
     test_true_log = np.log(test_act / test_prev)
 
+
     # Baseline lag-1: predict next return = previous return (persistence)
     # cho H=1: pred[t] = return[t-1]; cho H=5: pred[t] = past-5d return
     if horizon_days == 1:
@@ -424,9 +427,7 @@ def load_test_predictions(ticker: str) -> dict:
     }
 
 
-# ──────────────────────────────────────────────────────────────────────
 #  Metrics for bootstrapping
-# ──────────────────────────────────────────────────────────────────────
 
 def _da(y_true: np.ndarray, y_pred: np.ndarray) -> float:
     return float((np.sign(y_true) == np.sign(y_pred)).mean())
@@ -438,9 +439,7 @@ def _sharpe(returns: np.ndarray, periods_per_year: int = 252) -> float:
     return float(returns.mean() / returns.std() * np.sqrt(periods_per_year))
 
 
-# ──────────────────────────────────────────────────────────────────────
 #  Main — chạy mọi test cho 10 ticker + aggregate
-# ──────────────────────────────────────────────────────────────────────
 
 def main():
     tickers = ['VCB', 'BID', 'CTG', 'MBB', 'TCB', 'VPB', 'ACB', 'HDB', 'SHB', 'VIB']
@@ -585,13 +584,13 @@ def main():
                 r[f'binom_{gated_label}_reject_holm'] = bool(reject_holm[i])
                 r[f'binom_{gated_label}_reject_bh10'] = bool(reject_bh[i])
 
-    # ═══════ Xuất CSV ═══════
+    #  Xuất CSV 
     df = pd.DataFrame(results)
     out_csv = 'models/statistical_tests.csv'
     df.to_csv(out_csv, index=False, encoding='utf-8')
     print(f"\n[WRITE] {out_csv}")
 
-    # ═══════ Xuất Markdown ═══════
+    #  Xuất Markdown 
     md = []
     md.append("# Statistical Significance Tests — CNN-LSTM-Attention\n")
     md.append("*Cấu hình*: Ensemble 5 seeds, horizon H=5, temperature-scaled on VAL, "
@@ -719,7 +718,7 @@ def main():
         f.write("\n".join(md))
     print(f"[WRITE] {out_md}")
 
-    # ═══════ In tóm tắt ═══════
+    #  In tóm tắt 
     if valid:
         print("\n" + "=" * 90)
         print(f"  TỔNG KẾT — {len(valid)} ticker")
