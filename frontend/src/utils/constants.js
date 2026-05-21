@@ -1,18 +1,18 @@
 export const NEWS_BANK_ALIASES = {
   ALL: [],
-  VCB: ['vcb', 'vietcombank', 'ngo\u1ea1i th\u01b0\u01a1ng', 'vietcom bank'],
-  BID: ['bid', 'bidv', '\u0111\u1ea7u t\u01b0 v\u00e0 ph\u00e1t tri\u1ec3n'],
-  CTG: ['ctg', 'vietinbank', 'c\u00f4ng th\u01b0\u01a1ng', 'vietin bank'],
-  MBB: ['mbb', 'mb bank', 'mb', 'qu\u00e2n \u0111\u1ed9i'],
-  TCB: ['tcb', 'techcombank', 'k\u1ef9 th\u01b0\u01a1ng'],
-  VPB: ['vpb', 'vpbank', 'vi\u1ec7t nam th\u1ecbnh v\u01b0\u1ee3ng'],
-  ACB: ['acb', '\u00e1 ch\u00e2u', 'asia commercial'],
-  HDB: ['hdb', 'hdbank', 'ph\u00e1t tri\u1ec3n tphcm'],
-  SHB: ['shb', 's\u00e0i g\u00f2n h\u00e0 n\u1ed9i'],
-  VIB: ['vib', 'qu\u1ed1c t\u1ebf'],
+  VCB: ['vcb', 'vietcombank', 'ngoại thương', 'vietcom bank'],
+  BID: ['bid', 'bidv', 'đầu tư và phát triển'],
+  CTG: ['ctg', 'vietinbank', 'công thương', 'vietin bank'],
+  MBB: ['mbb', 'mb bank', 'mb', 'quân đội'],
+  TCB: ['tcb', 'techcombank', 'kỹ thương'],
+  VPB: ['vpb', 'vpbank', 'việt nam thịnh vượng'],
+  ACB: ['acb', 'á châu', 'asia commercial'],
+  HDB: ['hdb', 'hdbank', 'phát triển tphcm'],
+  SHB: ['shb', 'sài gòn hà nội'],
+  VIB: ['vib', 'quốc tế'],
 };
 
-export const TRACKED_NEWS_SOURCES = ['CafeF', 'Vietstock', 'VNExpress', 'B\u00e1o \u0110\u1ea7u T\u01b0', 'VnEconomy', 'VnBusiness'];
+export const TRACKED_NEWS_SOURCES = ['CafeF', 'Vietstock', 'VNExpress', 'Báo Đầu Tư', 'VnEconomy', 'VnBusiness'];
 export const BANK_BRAND_THEMES = {
   VCB: {
     accent: '#1f8f5f',
@@ -70,52 +70,52 @@ export const BANK_HERO_BACKDROPS = {
   VCB: {
     image: 'https://images.pexels.com/photos/259027/pexels-photo-259027.jpeg?auto=compress&cs=tinysrgb&w=1600',
     wordmark: 'Vietcombank',
-    descriptor: 'Ng\u00e2n h\u00e0ng d\u1eabn d\u1eaft nh\u00f3m th\u01b0\u01a1ng m\u1ea1i qu\u1ed1c doanh',
+    descriptor: 'Ngân hàng dẫn dắt nhóm thương mại quốc doanh',
   },
   BID: {
     image: 'https://images.pexels.com/photos/323705/pexels-photo-323705.jpeg?auto=compress&cs=tinysrgb&w=1600',
     wordmark: 'BIDV',
-    descriptor: '\u0110\u1ea7u t\u01b0 v\u00e0 ph\u00e1t tri\u1ec3n v\u1edbi d\u1ea5u \u1ea5n h\u1ea1 t\u1ea7ng t\u00e0i ch\u00ednh',
+    descriptor: 'Đầu tư và phát triển với dấu ấn hạ tầng tài chính',
   },
   CTG: {
     image: 'https://images.pexels.com/photos/210607/pexels-photo-210607.jpeg?auto=compress&cs=tinysrgb&w=1600',
     wordmark: 'VietinBank',
-    descriptor: 'Th\u01b0\u01a1ng hi\u1ec7u ng\u00e2n h\u00e0ng c\u00f4ng th\u01b0\u01a1ng gi\u00e0u nh\u1eadn di\u1ec7n',
+    descriptor: 'Thương hiệu ngân hàng công thương giàu nhận diện',
   },
   MBB: {
     image: 'https://images.pexels.com/photos/164527/pexels-photo-164527.jpeg?auto=compress&cs=tinysrgb&w=1600',
     wordmark: 'MB Bank',
-    descriptor: 'Ng\u00e2n h\u00e0ng s\u1ed1 ti\u00ean phong v\u1edbi h\u1ec7 sinh th\u00e1i t\u00e0i ch\u00ednh to\u00e0n di\u1ec7n',
+    descriptor: 'Ngân hàng số tiên phong với hệ sinh thái tài chính toàn diện',
   },
   TCB: {
     image: 'https://images.pexels.com/photos/534216/pexels-photo-534216.jpeg?auto=compress&cs=tinysrgb&w=1600',
     wordmark: 'Techcombank',
-    descriptor: 'D\u1eabn \u0111\u1ea7u ng\u00e2n h\u00e0ng t\u01b0 nh\u00e2n v\u1ec1 hi\u1ec7u qu\u1ea3 v\u1eadn h\u00e0nh',
+    descriptor: 'Dẫn đầu ngân hàng tư nhân về hiệu quả vận hành',
   },
   VPB: {
     image: 'https://images.pexels.com/photos/936722/pexels-photo-936722.jpeg?auto=compress&cs=tinysrgb&w=1600',
     wordmark: 'VPBank',
-    descriptor: 'Ng\u00e2n h\u00e0ng b\u00e1n l\u1ebb v\u1edbi h\u1ec7 sinh th\u00e1i t\u00edn d\u1ee5ng ti\u00eau d\u00f9ng',
+    descriptor: 'Ngân hàng bán lẻ với hệ sinh thái tín dụng tiêu dùng',
   },
   ACB: {
     image: 'https://images.pexels.com/photos/351264/pexels-photo-351264.jpeg?auto=compress&cs=tinysrgb&w=1600',
     wordmark: 'ACB',
-    descriptor: 'Ng\u00e2n h\u00e0ng \u00c1 Ch\u00e2u, \u1ed5n \u0111\u1ecbnh v\u00e0 b\u1ec1n v\u1eefng',
+    descriptor: 'Ngân hàng Á Châu, ổn định và bền vững',
   },
   HDB: {
     image: 'https://images.pexels.com/photos/1036857/pexels-photo-1036857.jpeg?auto=compress&cs=tinysrgb&w=1600',
     wordmark: 'HDBank',
-    descriptor: 'Ng\u00e2n h\u00e0ng h\u1ea1nh ph\u00fac v\u1edbi chi\u1ebfn l\u01b0\u1ee3c b\u00e1n l\u1ebb \u0111a k\u00eanh',
+    descriptor: 'Ngân hàng hạnh phúc với chiến lược bán lẻ đa kênh',
   },
   SHB: {
     image: 'https://images.pexels.com/photos/1029599/pexels-photo-1029599.jpeg?auto=compress&cs=tinysrgb&w=1600',
     wordmark: 'SHB',
-    descriptor: 'S\u00e0i G\u00f2n - H\u00e0 N\u1ed9i, k\u1ebft n\u1ed1i hai mi\u1ec1n t\u00e0i ch\u00ednh',
+    descriptor: 'Sài Gòn - Hà Nội, kết nối hai miền tài chính',
   },
   VIB: {
     image: 'https://images.pexels.com/photos/256381/pexels-photo-256381.jpeg?auto=compress&cs=tinysrgb&w=1600',
     wordmark: 'VIB',
-    descriptor: 'Ng\u00e2n h\u00e0ng qu\u1ed1c t\u1ebf, ti\u00ean phong cho vay \u00f4 t\u00f4 b\u00e1n l\u1ebb',
+    descriptor: 'Ngân hàng quốc tế, tiên phong cho vay ô tô bán lẻ',
   },
 };
 export const VALID_TICKERS = ['VCB', 'BID', 'CTG', 'MBB', 'TCB', 'VPB', 'ACB', 'HDB', 'SHB', 'VIB'];

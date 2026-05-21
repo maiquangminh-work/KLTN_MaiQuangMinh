@@ -14,17 +14,17 @@ function ActionGuidePanelV2({ recColor, actionPlan, decisionGuidance, technicalR
         footer: 'Start with the watch range and probability scenarios above. Reassess when the setup changes clearly or the defensive scenario is triggered.',
       }
     : {
-        title: 'K\u1ebf ho\u1ea1ch theo d\u00f5i ng\u1eafn h\u1ea1n',
-        watchRange: 'V\u00f9ng quan s\u00e1t',
-        targetLevel: 'K\u1ecbch b\u1ea3n k\u1ef3 v\u1ecdng',
-        guardrailLevel: 'K\u1ecbch b\u1ea3n r\u1ee7i ro',
-        guidanceTitle: 'N\u1ebfu b\u1ea1n \u0111ang \u1edf t\u00ecnh hu\u1ed1ng n\u00e0y',
-        reasonTitle: '3 l\u00fd do n\u1ed5i b\u1eadt',
-        referencesTitle: 'Ngu\u1ed3n tham chi\u1ebfu \u0111\u1ec3 \u0111\u1ecdc th\u00eam',
-        openSource: 'M\u1edf ngu\u1ed3n',
-        noPreview: 'Ch\u01b0a c\u00f3 \u1ea3nh xem tr\u01b0\u1edbc',
-        readArticle: '\u0110\u1ecdc b\u00e0i',
-        footer: 'H\u00e3y \u01b0u ti\u00ean v\u00f9ng quan s\u00e1t v\u00e0 c\u00e1c k\u1ecbch b\u1ea3n x\u00e1c su\u1ea5t ph\u00eda tr\u00ean. Ch\u1ec9 \u0111\u00e1nh gi\u00e1 l\u1ea1i khi thi\u1ebft l\u1eadp thay \u0111\u1ed5i r\u00f5 ho\u1eb7c k\u1ecbch b\u1ea3n r\u1ee7i ro b\u1ecb k\u00edch ho\u1ea1t.',
+        title: 'Kế hoạch theo dõi ngắn hạn',
+        watchRange: 'Vùng quan sát',
+        targetLevel: 'Kịch bản kỳ vọng',
+        guardrailLevel: 'Kịch bản rủi ro',
+        guidanceTitle: 'Nếu bạn đang ở tình huống này',
+        reasonTitle: '3 lý do nổi bật',
+        referencesTitle: 'Nguồn tham khảo để đọc thêm',
+        openSource: 'Mở nguồn',
+        noPreview: 'Chưa có ảnh xem trước',
+        readArticle: 'Đọc bài',
+        footer: 'Hãy ưu tiên vùng quan sát và các kịch bản xác suất ở trên. Đánh giá lại khi thiết lập thay đổi rõ ràng hoặc kịch bản phòng ngừa được kích hoạt.',
       };
 
   const officialReferences = (technicalReferences || []).filter((item) => item.kind === 'official');

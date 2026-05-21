@@ -2681,7 +2681,7 @@ async def get_market_news(limit: int = Query(default=200, ge=20, le=400)):
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
-# Gemini settings
+# Groq AI Assistant Endpoint
 
 @app.post("/api/chat")
 async def ai_assistant(request: Request):
