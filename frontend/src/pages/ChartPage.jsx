@@ -21,6 +21,9 @@ import HistoryTablePanel from '../components/HistoryTablePanel';
 import LoadingStatePanel from '../components/LoadingStatePanel';
 import AISignalBacktestPanel from '../components/ui/AISignalBacktestPanel';
 import QuickStatsBanner from '../components/ui/QuickStatsBanner';
+import ConfidenceHeroCard from '../components/ui/ConfidenceHeroCard';
+import XaiAttentionHeatmap from '../components/ui/XaiAttentionHeatmap';
+import OfflineFallbackPanel from '../components/ui/OfflineFallbackPanel';
 import { exportChartDataCSV, exportPredictionReportCSV } from '../utils/export';
 
 const BANK_NAMES_EN = {
@@ -937,9 +940,13 @@ export default function ChartPage() {
 
   if (error) {
     return (
-      <div style={{ background: '#0b0e11', height: '100vh', display: 'flex', flexDirection: 'column', justifyContent: 'center', alignItems: 'center', color: '#f6465d' }}>
-        <h3>{error}</h3>
-        <button className="btn" onClick={() => window.location.reload()}>{shellCopy.retry}</button>
+      <div className="min-h-screen bg-slate-950 flex items-center justify-center p-6">
+        <OfflineFallbackPanel
+          ticker={ticker}
+          errorMessage={error}
+          onRetry={() => window.location.reload()}
+          lastUpdatedTime={latestDataTime}
+        />
       </div>
     );
   }
@@ -984,6 +991,17 @@ export default function ChartPage() {
               {dataQualityWarning.issueText && <div>V\u1ea5n \u0111\u1ec1: {dataQualityWarning.issueText}</div>}
             </div>
           )}
+
+          {/* Hero Signal Metric Card */}
+          <ConfidenceHeroCard
+            ticker={ticker}
+            signal={scores?.recommendation?.action || 'NEUTRAL'}
+            confidence={data?.confidence_score ?? scores?.confidenceScore ?? 0.75}
+            predictedReturn={data?.probability_forecast?.predicted_return ?? 0.035}
+            currentPrice={Number(data?.current_price || scores?.currentPrice || 0)}
+            horizonDays={5}
+            isLightTheme={isLightTheme}
+          />
 
           <div style={{ position: 'relative' }}>
             {loading && (
@@ -1096,6 +1114,14 @@ export default function ChartPage() {
                     <div ref={attentionContainerRef} style={{ width: '100%', minWidth: 0, maxWidth: '100%' }}></div>
                   </div>
 
+                  {/* XAI Natural Language Attention Heatmap */}
+                  <div className="mt-4">
+                    <XaiAttentionHeatmap
+                      attentionWeights={data?.attention_weights || [0.05, 0.12, 0.28, 0.45, 0.85, 0.32, 0.15, 0.08]}
+                      timestamps={visibleChartData.slice(-10).map(d => d.time)}
+                      isLightTheme={isLightTheme}
+                    />
+                  </div>
                 </div>
 
                 <QuickStatsBanner ticker={ticker} language={language} />

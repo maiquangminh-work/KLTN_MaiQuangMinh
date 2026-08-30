@@ -1,20 +1,20 @@
 # Portfolio-Level Backtest — CNN-LSTM-Attention
 
-*Cấu hình*: top-N=3 confidence-ranked, equal-weight long-only, hold H=5d, transaction cost 0.15%/lượt, benchmark = Equal-Weight(10 ticker).
+*Cấu hình*: top-N=3 confidence-ranked, equal-weight long-only, hold H=5d, transaction cost 0.40%/lượt, benchmark = Equal-Weight(10 ticker).
 
 ## Tóm tắt hiệu năng
 
 | Metric | Portfolio (top-N) | Benchmark EW(10) | Chênh lệch |
 |--------|-------------------|------------------|------------|
-| Total return | 55.38% | 25.23% | +30.15pp |
-| Annualized return | 60.41% | 27.28% | +33.13pp |
-| Annualized vol | 18.70% | 25.34% | — |
-| Sharpe ratio | **3.23** | 1.08 | +2.15 |
-| Max drawdown | -5.80% | -17.29% | — |
-| Information ratio | **1.253** | — | — |
-| Hit rate | 67.4% | — | — |
-| # bars (có trade) | 43 / 47 | — | — |
-| Avg tickers held | 1.60 / 3 | — | — |
+| Total return | 36.71% | 22.45% | +14.26pp |
+| Annualized return | 39.84% | 24.25% | +15.59pp |
+| Annualized vol | 16.20% | 20.50% | — |
+| Sharpe ratio | **2.46** | 1.18 | +1.28 |
+| Max drawdown | -5.74% | -14.25% | — |
+| Information ratio | **0.763** | — | — |
+| Hit rate | 51.2% | — | — |
+| # bars (có trade) | 41 / 47 | — | — |
+| Avg tickers held | 1.47 / 3 | — | — |
 | Avg turnover | 19.1% | — | — |
 
 ## Diễn giải

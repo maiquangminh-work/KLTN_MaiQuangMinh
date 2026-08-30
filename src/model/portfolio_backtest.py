@@ -143,7 +143,7 @@ def build_panel(tickers: list[str]) -> dict:
         if df_tk is not None and len(df_tk) > 0:
             frames.append(df_tk)
             print(f"  [{tk}] {len(df_tk)} test days "
-                  f"{pd.to_datetime(df_tk['date'].min()).date()} → "
+                  f"{pd.to_datetime(df_tk['date'].min()).date()} -> "
                   f"{pd.to_datetime(df_tk['date'].max()).date()}")
     if not frames:
         raise RuntimeError("No valid tickers loaded.")
@@ -360,18 +360,18 @@ def main():
     ap.add_argument('--top_n', type=int, default=3)
     ap.add_argument('--min_signal', type=float, default=0.0,
                     help='Lọc pred_log > min_signal trước khi rank (default 0 = long only)')
-    ap.add_argument('--tcost', type=float, default=0.0015,
-                    help='Transaction cost 1 lượt (default 0.15%)')
+    ap.add_argument('--tcost', type=float, default=0.0040,
+                    help='Transaction cost 1 lượt bao gồm thuế 0.1%, phí mua 0.15%, phí bán 0.15% và trượt giá (default 0.40%)')
     ap.add_argument('--horizon_days', type=int, default=5)
     ap.add_argument('--overlap', action='store_true',
                     help='Rebalance daily (overlapping). Default non-overlap mỗi H ngày.')
     ap.add_argument('--output_dir', default='models')
     args = ap.parse_args()
 
-    print("█" * 80)
-    print(f"  PORTFOLIO BACKTEST — top-{args.top_n}, min_signal={args.min_signal}, "
+    print("=" * 80)
+    print(f"  PORTFOLIO BACKTEST - top-{args.top_n}, min_signal={args.min_signal}, "
           f"tcost={args.tcost*100:.2f}%")
-    print("█" * 80)
+    print("=" * 80)
 
     panel = build_panel(args.tickers)
     long_df = panel['long']
@@ -384,7 +384,7 @@ def main():
     bench = benchmark_equal_weight(long_df, tcost=args.tcost,
                                    horizon_days=args.horizon_days,
                                    non_overlap=non_overlap)
-    print(f"\nRebalance mode: {'non-overlap (mỗi H ngày)' if non_overlap else 'daily (OVERLAPPING - tham khảo)'}")
+    print(f"\nRebalance mode: {'non-overlap (every H days)' if non_overlap else 'daily (OVERLAPPING)'}")
 
     # Cân số ngày
     common = sorted(set(port['date']).intersection(set(bench['date'])))
@@ -394,10 +394,10 @@ def main():
     bench['cum_bench'] = (1.0 + bench['bench_return']).cumprod()
 
     # bar_days: mỗi bar cover mấy ngày calendar.
-    # non_overlap → H ngày; overlap daily → 1 ngày (obs giao với nhau)
+    # non_overlap -> H ngày; overlap daily -> 1 ngày (obs giao với nhau)
     bar_days = args.horizon_days if non_overlap else 1
     stats = summarize(port, bench, bar_days=bar_days)
-    print("\n═══ KẾT QUẢ PORTFOLIO ═══")
+    print("\n=== PORTFOLIO RESULTS ===")
     for k, v in stats.items():
         if 'return' in k or 'vol' in k or 'mdd' in k or k == 'hit_rate' or 'turnover' in k:
             print(f"  {k:25s} = {v*100:.2f}%")
@@ -467,7 +467,7 @@ def main():
         f.write("\n".join(md))
     print(f"[WRITE] {md_path}")
 
-    print("\n✓ Xong portfolio backtest")
+    print("\n[DONE] Portfolio backtest complete")
 
 
 if __name__ == "__main__":
